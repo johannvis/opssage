@@ -11,7 +11,14 @@ paths:
     get:
       operationId: ping
       summary: Return the secure ping response.
-      description: Require a bearer token that matches the secret held in AWS Secrets Manager.
+      description: Require a bearer token that matches the secret held in AWS Secrets Manager. Echo the optional `number` query attribute in the response message.
+      parameters:
+        - in: query
+          name: number
+          schema:
+            type: string
+          required: false
+          description: Optional value that will be echoed back if provided.
       x-openai-isConsequential: false
       responses:
         "200":
@@ -27,10 +34,13 @@ paths:
                     type: string
                   requestId:
                     type: string
+                  message:
+                    type: string
                 required:
                   - ok
                   - path
                   - requestId
+                  - message
         "401":
           description: Missing or invalid bearer token.
 components:

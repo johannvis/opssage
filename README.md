@@ -1,6 +1,6 @@
 # GPT Bearer Prototype Infrastructure
 
-This repository contains the AWS CDK application that provisions the bearer-protected HTTP API, its Python Lambda handlers, and supporting AWS resources. The CDK code is written in TypeScript and the GitHub Actions workflow in `.github/workflows/cdk.yml` handles builds and deployments to the nominated account.
+This repository contains the AWS CDK application that provisions the bearer-protected HTTP API, its Python Lambda handlers, and supporting AWS resources. Authenticated requests to `/secure/ping` echo an optional `number` attribute, returning `you sent me <number>` when supplied or `you sent me nothing` otherwise. The CDK code is written in TypeScript and the GitHub Actions workflow in `.github/workflows/cdk.yml` handles builds and deployments to the nominated account.
 
 The `cdk.json` file defines how the CDK Toolkit executes the app entry point.
 
@@ -135,9 +135,10 @@ After the GitHub Actions workflow finishes deploying `GptapitestStack`, you can 
    ```bash
    curl -i \
      -H "Authorization: Bearer <token>" \
-     "$(API_BASE_URL)/secure/ping"
+     "$(API_BASE_URL)/secure/ping?number=42"
    ```
-   - Valid token → HTTP 200 with a JSON body (for example `{"ok": true, ...}`).
+   - Valid token → HTTP 200 with a JSON body (for example `{"ok": true, ..., "message": "you sent me 42"}`).
    - Missing or incorrect token → HTTP 401.
+   - Omit the `number` parameter to receive a `message` of `"you sent me nothing"`.
 
 Console workflow alternative: open `GptapitestStack` in CloudFormation to copy the outputs, update the secret in Secrets Manager, then invoke the URL through a tool like Postman.

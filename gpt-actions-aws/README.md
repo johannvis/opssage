@@ -1,6 +1,6 @@
 # GPT Actions Prototype – Bearer Authorised API
 
-This CDK app provisions a bearer-protected HTTP API for Custom GPT Actions experiments. A Python Lambda authoriser validates an `Authorization: Bearer <token>` header against AWS Secrets Manager, and a second Lambda returns a simple JSON payload.
+This CDK app provisions a bearer-protected HTTP API for Custom GPT Actions experiments. A Python Lambda authoriser validates an `Authorization: Bearer <token>` header against AWS Secrets Manager, and a second Lambda returns a JSON payload that echoes an optional `number` attribute sent with the request.
 
 ## Prerequisites
 
@@ -42,14 +42,14 @@ You may rotate the secret at any time with the same command; older tokens are in
 bash scripts/smoke.sh
 ```
 
-The script fetches the stack outputs, retrieves the bearer token from Secrets Manager, and issues unauthorised and authorised requests to verify the API behaviour.
+The script fetches the stack outputs, retrieves the bearer token from Secrets Manager, and issues unauthorised and authorised requests to verify the API behaviour. Export `NUMBER=<value>` before running to change the echoed number (defaults to `42`).
 
 ## Wire into a Custom GPT
 
 1. In GPT Builder, choose **Actions** → **Add Action** → **Import from file**, and select `openapi.yaml`.
 2. Replace `servers[0].url` with the `ApiBaseUrl` stack output (for example, `https://abc123.execute-api.ap-southeast-2.amazonaws.com`).
 3. Configure authentication as a Bearer token and paste the current secret from Secrets Manager.
-4. Save the Action, then prompt your GPT with “Call ping”. You should receive a `200` response containing `{ "ok": true, ... }`.
+4. Save the Action, then prompt your GPT with “Call ping”. You should receive a `200` response containing `{ "ok": true, ..., "message": "you sent me <number>" }` when the Action supplies the `number` query parameter.
 
 ## Clean-up
 
