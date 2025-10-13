@@ -1,0 +1,198 @@
+name: CDK Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Select `destroy` to tear down stacks, otherwise keep default deploy.
+        required: false
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - destroy
+      stack_name:
+        description: Optional CDK stack name to deploy. Leave blank to deploy all stacks.
+        required: false
+        default: ''
+
+env:
+  AWS_ACCOUNT: ${{ vars.AWS_ACCOUNT }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ROLE_NAME: ${{ vars.AWS_ROLE_NAME }}
+  CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT }}
+  CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  synth:
+    name: Build and Synth
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.action != 'destroy'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Normalize environment
+        run: |
+          account="$(printf '%s' "${AWS_ACCOUNT}" | tr -d '[:space:]')"
+          region="$(printf '%s' "${AWS_REGION}" | tr -d '[:space:]')"
+          echo "AWS_ACCOUNT=${account}" >> "$GITHUB_ENV"
+          echo "AWS_REGION=${region}" >> "$GITHUB_ENV"
+          echo "CDK_DEFAULT_ACCOUNT=${account}" >> "$GITHUB_ENV"
+          echo "CDK_DEFAULT_REGION=${region}" >> "$GITHUB_ENV"
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Synthesize CDK app
+        run: npx cdk synth
+
+  deploy:
+    name: Deploy Stacks
+    needs: synth
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.action != 'destroy'
+    env:
+      STACK_NAME: ${{ github.event.inputs.stack_name || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Normalize environment
+        run: |
+          account="$(printf '%s' "${AWS_ACCOUNT}" | tr -d '[:space:]')"
+          region="$(printf '%s' "${AWS_REGION}" | tr -d '[:space:]')"
+          echo "AWS_ACCOUNT=${account}" >> "$GITHUB_ENV"
+          echo "AWS_REGION=${region}" >> "$GITHUB_ENV"
+          echo "CDK_DEFAULT_ACCOUNT=${account}" >> "$GITHUB_ENV"
+          echo "CDK_DEFAULT_REGION=${region}" >> "$GITHUB_ENV"
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Derive role ARN
+        id: derive_role
+        run: |
+          # Normalize account and role values to avoid stray whitespace/newlines
+          account="$(printf '%s' "${AWS_ACCOUNT}" | tr -d '[:space:]')"
+          role="$(printf '%s' "${AWS_ROLE_NAME}" | tr -d '[:space:]')"
+          region="$(printf '%s' "${AWS_REGION}" | tr -d '[:space:]')"
+
+          if [[ "${region}" == cn-* ]]; then
+            partition="aws-cn"
+          elif [[ "${region}" == us-gov-* ]]; then
+            partition="aws-us-gov"
+          else
+            partition="aws"
+          fi
+          arn="arn:${partition}:iam::${account}:role/${role}"
+          echo "Derived role ARN: ${arn}"
+          echo "arn=${arn}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.derive_role.outputs.arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Deploy CDK stacks
+        run: |
+          if [ -z "$STACK_NAME" ]; then
+            npx cdk deploy --require-approval never
+          else
+            npx cdk deploy --require-approval never "$STACK_NAME"
+          fi
+
+  destroy:
+    name: Destroy Stacks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    env:
+      STACK_NAME: ${{ github.event.inputs.stack_name || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Normalize environment
+        run: |
+          account="$(printf '%s' "${AWS_ACCOUNT}" | tr -d '[:space:]')"
+          region="$(printf '%s' "${AWS_REGION}" | tr -d '[:space:]')"
+          echo "AWS_ACCOUNT=${account}" >> "$GITHUB_ENV"
+          echo "AWS_REGION=${region}" >> "$GITHUB_ENV"
+          echo "CDK_DEFAULT_ACCOUNT=${account}" >> "$GITHUB_ENV"
+          echo "CDK_DEFAULT_REGION=${region}" >> "$GITHUB_ENV"
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Derive role ARN
+        id: derive_role_destroy
+        run: |
+          account="$(printf '%s' "${AWS_ACCOUNT}" | tr -d '[:space:]')"
+          role="$(printf '%s' "${AWS_ROLE_NAME}" | tr -d '[:space:]')"
+          region="$(printf '%s' "${AWS_REGION}" | tr -d '[:space:]')"
+
+          if [[ "${region}" == cn-* ]]; then
+            partition="aws-cn"
+          elif [[ "${region}" == us-gov-* ]]; then
+            partition="aws-us-gov"
+          else
+            partition="aws"
+          fi
+          arn="arn:${partition}:iam::${account}:role/${role}"
+          echo "Derived role ARN: ${arn}"
+          echo "arn=${arn}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.derive_role_destroy.outputs.arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Destroy CDK stacks
+        run: |
+          if [ -z "$STACK_NAME" ]; then
+            npx cdk destroy --force
+          else
+            npx cdk destroy --force "$STACK_NAME"
+          fi

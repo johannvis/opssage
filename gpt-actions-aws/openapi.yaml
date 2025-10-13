@@ -1,0 +1,42 @@
+openapi: 3.0.1
+info:
+  title: Proto Bearer API
+  version: "1.0.0"
+  description: Minimal bearer-protected API for GPT Actions prototyping.
+servers:
+  - url: https://<REPLACE_WITH_API_BASE>
+    description: Replace with the ApiBaseUrl output from the CDK stack.
+paths:
+  /secure/ping:
+    get:
+      operationId: ping
+      summary: Return the secure ping response.
+      description: Require a bearer token that matches the secret held in AWS Secrets Manager.
+      x-openai-isConsequential: false
+      responses:
+        "200":
+          description: Successful ping response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  path:
+                    type: string
+                  requestId:
+                    type: string
+                required:
+                  - ok
+                  - path
+                  - requestId
+        "401":
+          description: Missing or invalid bearer token.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+security:
+  - bearerAuth: []
