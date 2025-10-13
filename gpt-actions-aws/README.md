@@ -29,8 +29,13 @@ The root project’s entry point (`bin/gptapitest.ts`) also reuses this stack bu
 ## Seed the bearer secret
 
 ```bash
+STACK_NAME="${STACK_NAME:-ProtoBearerStack}"
+SECRET_NAME=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='SecretName'].OutputValue" \
+  --output text)
 aws secretsmanager put-secret-value \
-  --secret-id gpt/prototype/token \
+  --secret-id "$SECRET_NAME" \
   --secret-string "$(openssl rand -hex 24)"
 ```
 

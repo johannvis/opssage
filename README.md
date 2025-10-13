@@ -126,8 +126,13 @@ After the GitHub Actions workflow finishes deploying `GptapitestStack`, you can 
    ```
 2. **Set the accepted bearer token** (swap `<token>` for the value you want Secrets Manager to hold):
    ```bash
+   SECRET_NAME=$(aws cloudformation describe-stacks \
+     --stack-name GptapitestStack \
+     --query "Stacks[0].Outputs[?OutputKey=='SecretName'].OutputValue" \
+     --output text \
+     --region "${AWS_REGION}")
    aws secretsmanager put-secret-value \
-     --secret-id gpt/prototype/token \
+     --secret-id "$SECRET_NAME" \
      --secret-string '<token>' \
      --region "${AWS_REGION}"
    ```

@@ -12,7 +12,7 @@ export class ProtoBearerStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    const secretName = 'gpt/prototype/token';
+    const secretName = `${this.stackName}/gptapitest/bearer-token`;
 
     const bearerSecret = new secretsmanager.Secret(this, 'PrototypeTokenSecret', {
       secretName: secretName,
@@ -27,6 +27,7 @@ export class ProtoBearerStack extends Stack {
         SECRET_NAME: secretName,
       },
       description: 'Validates bearer tokens against Secrets Manager',
+      functionName: `${this.stackName}-authorizer`,
     });
 
     authorizerFunction.addToRolePolicy(
@@ -41,10 +42,11 @@ export class ProtoBearerStack extends Stack {
       handler: 'app.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, 'src')),
       description: 'Handles secure ping requests',
+      functionName: `${this.stackName}-secure-api`,
     });
 
     const httpApi = new HttpApi(this, 'ProtoBearerHttpApi', {
-      apiName: 'proto-bearer-api',
+      apiName: `${this.stackName}-proto-bearer-api`,
       corsPreflight: {
         allowHeaders: ['*'],
         allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.OPTIONS],

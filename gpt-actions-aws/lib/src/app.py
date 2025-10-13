@@ -41,7 +41,7 @@ def _extract_number(event: Dict[str, Any]) -> Optional[str]:
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """Return a friendly ping response so the bearer authoriser can be exercised."""
+    """Return a friendly ping response that echoes the optional `number` attribute."""
     request_id = getattr(context, "aws_request_id", "")
     number = _extract_number(event)
     message = f"you sent me {number}" if number else "you sent me nothing"
