@@ -40,17 +40,18 @@ export class ProtoBearerStack extends Stack {
         action: 'describeSecret',
         parameters: { SecretId: secretName },
         physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-prototype-token-secret-lookup`),
+        ignoreErrorCodesMatching: 'ResourceNotFoundException',
       },
       onUpdate: {
         service: 'SecretsManager',
         action: 'describeSecret',
         parameters: { SecretId: secretName },
         physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-prototype-token-secret-lookup`),
+        ignoreErrorCodesMatching: 'ResourceNotFoundException',
       },
       policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
       timeout: Duration.minutes(1),
       installLatestAwsSdk: false,
-      ignoreErrorCodesMatching: 'ResourceNotFoundException',
     });
 
     const openAiSecretLookup = new cr.AwsCustomResource(this, 'OpenAiSecretLookup', {
@@ -59,17 +60,18 @@ export class ProtoBearerStack extends Stack {
         action: 'describeSecret',
         parameters: { SecretId: openAiSecretName },
         physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-openai-secret-lookup`),
+        ignoreErrorCodesMatching: 'ResourceNotFoundException',
       },
       onUpdate: {
         service: 'SecretsManager',
         action: 'describeSecret',
         parameters: { SecretId: openAiSecretName },
         physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-openai-secret-lookup`),
+        ignoreErrorCodesMatching: 'ResourceNotFoundException',
       },
       policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
       timeout: Duration.minutes(1),
       installLatestAwsSdk: false,
-      ignoreErrorCodesMatching: 'ResourceNotFoundException',
     });
 
     const existingBearerSecretArnToken = bearerSecretLookup.getResponseField('ARN') || '';
