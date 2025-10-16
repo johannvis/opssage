@@ -32,6 +32,7 @@ You can provide the account/region via environment variables or inline (e.g. `np
   - `OpssageStack:RealtimeTokenRateLimit`  
   - `OpssageStack:RealtimeModelName`
   Include the same flags in your pipeline command when you change these values.
+- **Reusing secrets (optional)**: Supply `OpssageStack:ExistingBearerSecretArn` / `OpssageStack:ExistingBearerSecretName` and/or `OpssageStack:ExistingOpenAiSecretArn` / `OpssageStack:ExistingOpenAiSecretName` if you want the stack to reference pre-created Secrets Manager entries instead of creating new ones.
 - **Client configuration**: Front-end callers must supply the bearer secret in the `Authorization` header when requesting `/secure/ping` or `/secure/realtime-token`.
 
 ### Populate secrets after deployment
@@ -57,6 +58,8 @@ aws secretsmanager put-secret-value \
 ```
 
 Repeat the commands whenever you rotate either credential.
+
+If you deploy with the optional `Existing*` secret parameters, skip the creation commands and ensure the referenced secrets already contain the desired values.
 
 ## GitHub Actions IAM setup
 
