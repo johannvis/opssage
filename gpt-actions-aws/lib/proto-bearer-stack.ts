@@ -123,6 +123,31 @@ export class ProtoBearerStack extends Stack {
       resultsCacheTtl: Duration.seconds(0),
     });
 
+    const realtimeTokenFunction = new lambda.Function(this, 'RealtimeTokenFn', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'realtime_token.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, 'src')),
+      environment: {
+        SECRET_NAME: secretName,
+        OPENAI_API_KEY_SECRET_ARN: openAiSecret.secretArn,
+        REALTIME_MODEL: realtimeModel.valueAsString,
+        API_BASE_URL: httpApi.apiEndpoint,
+      },
+      description: 'Mints short-lived OpenAI realtime session tokens for authorised clients',
+      functionName: `${this.stackName}-realtime-token`,
+      timeout: Duration.seconds(10),
+    });
+
+    realtimeTokenFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [
+          bearerSecret.secretArn,
+          openAiSecret.secretArn,
+        ],
+      }),
+    );
+
     httpApi.addRoutes({
       path: '/secure/ping',
       methods: [HttpMethod.GET],
