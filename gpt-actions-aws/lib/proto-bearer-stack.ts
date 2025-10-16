@@ -1,7 +1,7 @@
 import * as path from 'path';
-import { Duration, Stack, StackProps, CfnOutput, RemovalPolicy } from 'aws-cdk-lib';
+import { Duration, Stack, StackProps, CfnOutput, RemovalPolicy, CfnParameter } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { HttpApi, CorsHttpMethod, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
+import { HttpApi, CorsHttpMethod, HttpMethod, CfnStage } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
@@ -12,7 +12,7 @@ export class ProtoBearerStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    const secretName = `${this.stackName}/gptapitest/bearer-token`;
+    const secretName = `${this.stackName}/opssage/bearer-token`;
 
     const bearerSecret = new secretsmanager.Secret(this, 'PrototypeTokenSecret', {
       secretName: secretName,
@@ -45,8 +45,34 @@ export class ProtoBearerStack extends Stack {
       functionName: `${this.stackName}-secure-api`,
     });
 
+    const realtimeBurstLimit = new CfnParameter(this, 'RealtimeTokenBurstLimit', {
+      type: 'Number',
+      default: 5,
+      description: 'API Gateway burst limit for the realtime token route.',
+      minValue: 1,
+    });
+
+    const realtimeRateLimit = new CfnParameter(this, 'RealtimeTokenRateLimit', {
+      type: 'Number',
+      default: 10,
+      description: 'API Gateway steady-state rate limit (requests per second) for the realtime token route.',
+      minValue: 1,
+    });
+
+    const realtimeModel = new CfnParameter(this, 'RealtimeModelName', {
+      type: 'String',
+      default: 'gpt-4o-realtime-preview',
+      description: 'OpenAI model to request when minting realtime sessions.',
+    });
+
+    const openAiSecret = new secretsmanager.Secret(this, 'OpenAiApiKeySecret', {
+      secretName: `${this.stackName}/openai/api-key`,
+    });
+    openAiSecret.applyRemovalPolicy(RemovalPolicy.RETAIN);
+
     const httpApi = new HttpApi(this, 'ProtoBearerHttpApi', {
       apiName: `${this.stackName}-proto-bearer-api`,
+      createDefaultStage: false,
       corsPreflight: {
         allowHeaders: ['*'],
         allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.OPTIONS],
@@ -61,11 +87,55 @@ export class ProtoBearerStack extends Stack {
       resultsCacheTtl: Duration.seconds(0),
     });
 
+    const realtimeTokenFunction = new lambda.Function(this, 'RealtimeTokenFn', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'realtime_token.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, 'src')),
+      environment: {
+        SECRET_NAME: secretName,
+        OPENAI_API_KEY_SECRET_ARN: openAiSecret.secretArn,
+        REALTIME_MODEL: realtimeModel.valueAsString,
+        API_BASE_URL: httpApi.apiEndpoint,
+      },
+      description: 'Mints short-lived OpenAI realtime session tokens for authorised clients',
+      functionName: `${this.stackName}-realtime-token`,
+      timeout: Duration.seconds(10),
+    });
+
+    realtimeTokenFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [
+          bearerSecret.secretArn,
+          openAiSecret.secretArn,
+        ],
+      }),
+    );
+
     httpApi.addRoutes({
       path: '/secure/ping',
       methods: [HttpMethod.GET],
       integration: new HttpLambdaIntegration('PingIntegration', apiFunction),
       authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/secure/realtime-token',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('RealtimeTokenIntegration', realtimeTokenFunction),
+      authorizer,
+    });
+
+    new CfnStage(this, 'ProtoBearerDefaultStage', {
+      apiId: httpApi.apiId,
+      stageName: '$default',
+      autoDeploy: true,
+      routeSettings: {
+        'POST /secure/realtime-token': {
+          throttlingBurstLimit: realtimeBurstLimit.valueAsNumber,
+          throttlingRateLimit: realtimeRateLimit.valueAsNumber,
+        },
+      },
     });
 
     new CfnOutput(this, 'ApiBaseUrl', {
@@ -74,6 +144,10 @@ export class ProtoBearerStack extends Stack {
 
     new CfnOutput(this, 'SecretName', {
       value: secretName,
+    });
+
+    new CfnOutput(this, 'OpenAiSecretArn', {
+      value: openAiSecret.secretArn,
     });
   }
 }

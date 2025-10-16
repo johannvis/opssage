@@ -23,6 +23,41 @@ npx cdk bootstrap aws://${AWS_ACCOUNT}/${AWS_REGION}
 
 You can provide the account/region via environment variables or inline (e.g. `npx cdk bootstrap aws://592230817133/ap-southeast-2`).
 
+## Required configuration
+
+- **OpenAI API key secret**: The stack provisions an empty secret at `/<stack-name>/openai/api-key`. After deployment, update it with your OpenAI platform key: `aws secretsmanager put-secret-value --secret-id <arn> --secret-string "$OPENAI_API_KEY"`.
+- **Bearer token secret**: The stack provisions `/<stack-name>/opssage/bearer-token`. Update it with your shared bearer string via `aws secretsmanager put-secret-value`.
+- **Rate limits / model overrides** (optional): Override the following parameters if the defaults (5 burst, 10 rps, `gpt-4o-realtime-preview`) need tuning:  
+  - `OpssageStack:RealtimeTokenBurstLimit`  
+  - `OpssageStack:RealtimeTokenRateLimit`  
+  - `OpssageStack:RealtimeModelName`
+  Include the same flags in your pipeline command when you change these values.
+- **Client configuration**: Front-end callers must supply the bearer secret in the `Authorization` header when requesting `/secure/ping` or `/secure/realtime-token`.
+
+### Populate secrets after deployment
+
+```bash
+STACK_NAME="${STACK_NAME:-OpssageStack}"
+SECRET_NAME=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='SecretName'].OutputValue" \
+  --output text)
+OPENAI_SECRET_ARN=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='OpenAiSecretArn'].OutputValue" \
+  --output text)
+
+aws secretsmanager put-secret-value \
+  --secret-id "$SECRET_NAME" \
+  --secret-string '<bearer-token>'
+
+aws secretsmanager put-secret-value \
+  --secret-id "$OPENAI_SECRET_ARN" \
+  --secret-string "$OPENAI_API_KEY"
+```
+
+Repeat the commands whenever you rotate either credential.
+
 ## GitHub Actions IAM setup
 
 The workflow assumes an IAM role using GitHub OIDC. Create a role in the target account named `github-actions-deploy-general` (matches `AWS_ROLE_NAME`), with:
@@ -114,12 +149,12 @@ Adjust the service actions to match the resources your stack provisions. The wil
 
 ## Testing the bearer-protected API
 
-After the GitHub Actions workflow finishes deploying `GptapitestStack`, you can exercise the secured endpoint with these steps:
+After the GitHub Actions workflow finishes deploying `OpssageStack`, you can exercise the secured endpoint with these steps:
 
 1. **Fetch stack outputs** (grabs both `ApiBaseUrl` and `SecretName`):
    ```bash
    aws cloudformation describe-stacks \
-     --stack-name GptapitestStack \
+    --stack-name OpssageStack \
      --query "Stacks[0].Outputs" \
      --output table \
      --region "${AWS_REGION}"
@@ -127,7 +162,7 @@ After the GitHub Actions workflow finishes deploying `GptapitestStack`, you can 
 2. **Set the accepted bearer token** (swap `<token>` for the value you want Secrets Manager to hold):
    ```bash
    SECRET_NAME=$(aws cloudformation describe-stacks \
-     --stack-name GptapitestStack \
+     --stack-name OpssageStack \
      --query "Stacks[0].Outputs[?OutputKey=='SecretName'].OutputValue" \
      --output text \
      --region "${AWS_REGION}")
@@ -146,4 +181,4 @@ After the GitHub Actions workflow finishes deploying `GptapitestStack`, you can 
    - Missing or incorrect token → HTTP 401.
    - Omit the `number` parameter to receive a `message` of `"you sent me nothing"`.
 
-Console workflow alternative: open `GptapitestStack` in CloudFormation to copy the outputs, update the secret in Secrets Manager, then invoke the URL through a tool like Postman.
+Console workflow alternative: open `OpssageStack` in CloudFormation to copy the outputs, update the secret in Secrets Manager, then invoke the URL through a tool like Postman.
