@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STACK_NAME="${STACK_NAME:-GptapitestStack}"
+STACK_NAME="${STACK_NAME:-OpssageStack}"
 REGION="${AWS_REGION:-${CDK_DEFAULT_REGION:-}}"
 NUMBER_VALUE="${NUMBER:-42}"
 

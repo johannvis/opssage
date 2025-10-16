@@ -1,8 +1,8 @@
 {
-  "name": "gptapitest",
+  "name": "opssage",
   "version": "0.1.0",
   "bin": {
-    "gptapitest": "bin/gptapitest.js"
+    "opssage": "bin/opssage.js"
   },
   "scripts": {
     "build": "tsc",
