@@ -64,7 +64,7 @@ export class ProtoBearerStack extends Stack {
       expression: Fn.conditionEquals(existingOpenAiSecretArn.valueAsString, ''),
     });
 
-    const bearerSecret = new secretsmanager.Secret(this, 'OpssageBearerSecret', {
+    const bearerSecret = new secretsmanager.Secret(this, 'PrototypeTokenSecret', {
       secretName,
     });
     bearerSecret.applyRemovalPolicy(RemovalPolicy.RETAIN);
@@ -138,6 +138,23 @@ export class ProtoBearerStack extends Stack {
       functionName: `${this.stackName}-secure-api`,
     });
 
+    const httpApi = new HttpApi(this, 'OpssageHttpApi', {
+      apiName: `${this.stackName}-proto-bearer-api`,
+      createDefaultStage: false,
+      corsPreflight: {
+        allowHeaders: ['*'],
+        allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.POST, CorsHttpMethod.OPTIONS],
+        allowOrigins: ['*'],
+        maxAge: Duration.hours(1),
+      },
+    });
+
+    const authorizer = new HttpLambdaAuthorizer('OpssageAuthorizer', authorizerFunction, {
+      identitySource: ['$request.header.Authorization'],
+      responseTypes: [HttpLambdaResponseType.SIMPLE],
+      resultsCacheTtl: Duration.seconds(0),
+    });
+
     const realtimeTokenFunction = new lambda.Function(this, 'RealtimeTokenFn', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'realtime_token.handler',
@@ -186,48 +203,6 @@ export class ProtoBearerStack extends Stack {
       }),
     );
 
-    const httpApi = new HttpApi(this, 'OpssageHttpApi', {
-      apiName: `${this.stackName}-proto-bearer-api`,
-      createDefaultStage: false,
-      corsPreflight: {
-        allowHeaders: ['*'],
-        allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.POST, CorsHttpMethod.OPTIONS],
-        allowOrigins: ['*'],
-        maxAge: Duration.hours(1),
-      },
-    });
-
-    const authorizer = new HttpLambdaAuthorizer('OpssageAuthorizer', authorizerFunction, {
-      identitySource: ['$request.header.Authorization'],
-      responseTypes: [HttpLambdaResponseType.SIMPLE],
-      resultsCacheTtl: Duration.seconds(0),
-    });
-
-    const realtimeTokenFunction = new lambda.Function(this, 'RealtimeTokenFn', {
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'realtime_token.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, 'src')),
-      environment: {
-        SECRET_NAME: secretName,
-        OPENAI_API_KEY_SECRET_ARN: openAiSecret.secretArn,
-        REALTIME_MODEL: realtimeModel.valueAsString,
-        API_BASE_URL: httpApi.apiEndpoint,
-      },
-      description: 'Mints short-lived OpenAI realtime session tokens for authorised clients',
-      functionName: `${this.stackName}-realtime-token`,
-      timeout: Duration.seconds(10),
-    });
-
-    realtimeTokenFunction.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['secretsmanager:GetSecretValue'],
-        resources: [
-          bearerSecret.secretArn,
-          openAiSecret.secretArn,
-        ],
-      }),
-    );
-
     httpApi.addRoutes({
       path: '/secure/ping',
       methods: [HttpMethod.GET],
@@ -256,8 +231,6 @@ export class ProtoBearerStack extends Stack {
       'RouteSettings.POST ~1secure~1realtime-token.ThrottlingRateLimit',
       realtimeRateLimit.valueAsNumber,
     );
-
-    realtimeTokenFunction.addEnvironment('API_BASE_URL', httpApi.apiEndpoint);
 
     realtimeTokenFunction.addEnvironment('API_BASE_URL', httpApi.apiEndpoint);
 
