@@ -37,17 +37,21 @@ export class ProtoBearerStack extends Stack {
     const bearerSecretLookup = new cr.AwsCustomResource(this, 'PrototypeTokenSecretLookup', {
       onCreate: {
         service: 'SecretsManager',
-        action: 'describeSecret',
-        parameters: { SecretId: secretName },
+        action: 'listSecrets',
+        parameters: {
+          Filters: [{ Key: 'name', Values: [secretName] }],
+          MaxResults: 1,
+        },
         physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-prototype-token-secret-lookup`),
-        ignoreErrorCodesMatching: 'ResourceNotFoundException',
       },
       onUpdate: {
         service: 'SecretsManager',
-        action: 'describeSecret',
-        parameters: { SecretId: secretName },
+        action: 'listSecrets',
+        parameters: {
+          Filters: [{ Key: 'name', Values: [secretName] }],
+          MaxResults: 1,
+        },
         physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-prototype-token-secret-lookup`),
-        ignoreErrorCodesMatching: 'ResourceNotFoundException',
       },
       policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
       timeout: Duration.minutes(1),
@@ -57,25 +61,29 @@ export class ProtoBearerStack extends Stack {
     const openAiSecretLookup = new cr.AwsCustomResource(this, 'OpenAiSecretLookup', {
       onCreate: {
         service: 'SecretsManager',
-        action: 'describeSecret',
-        parameters: { SecretId: openAiSecretName },
+        action: 'listSecrets',
+        parameters: {
+          Filters: [{ Key: 'name', Values: [openAiSecretName] }],
+          MaxResults: 1,
+        },
         physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-openai-secret-lookup`),
-        ignoreErrorCodesMatching: 'ResourceNotFoundException',
       },
       onUpdate: {
         service: 'SecretsManager',
-        action: 'describeSecret',
-        parameters: { SecretId: openAiSecretName },
+        action: 'listSecrets',
+        parameters: {
+          Filters: [{ Key: 'name', Values: [openAiSecretName] }],
+          MaxResults: 1,
+        },
         physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-openai-secret-lookup`),
-        ignoreErrorCodesMatching: 'ResourceNotFoundException',
       },
       policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
       timeout: Duration.minutes(1),
       installLatestAwsSdk: false,
     });
 
-    const existingBearerSecretArnToken = bearerSecretLookup.getResponseField('ARN') || '';
-    const existingOpenAiSecretArnToken = openAiSecretLookup.getResponseField('ARN') || '';
+    const existingBearerSecretArnToken = bearerSecretLookup.getResponseField('SecretList.0.ARN');
+    const existingOpenAiSecretArnToken = openAiSecretLookup.getResponseField('SecretList.0.ARN');
 
     const createBearerSecretCondition = new CfnCondition(this, 'CreateBearerSecretCondition', {
       expression: Fn.conditionEquals(existingBearerSecretArnToken, ''),
