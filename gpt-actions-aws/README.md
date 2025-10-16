@@ -28,8 +28,6 @@ The root project’s entry point (`bin/opssage.ts`) also reuses this stack but g
 
 ### Optional parameters
 
-- `ProtoBearerStack:ExistingBearerSecretArn` / `ProtoBearerStack:ExistingBearerSecretName`: Provide both values to reuse an existing bearer-token secret instead of creating one.
-- `ProtoBearerStack:ExistingOpenAiSecretArn` / `ProtoBearerStack:ExistingOpenAiSecretName`: Provide both values to reuse an existing OpenAI API key secret instead of creating one.
 - `ProtoBearerStack:RealtimeTokenBurstLimit` (default `5`): API Gateway burst limit applied to `POST /secure/realtime-token`.  
   - Optional pipeline flag: `--parameters ProtoBearerStack:RealtimeTokenBurstLimit=$REALTIME_TOKEN_BURST`
 - `ProtoBearerStack:RealtimeTokenRateLimit` (default `10`): Steady-state rate limit (requests/second) for the token route.  
@@ -52,6 +50,8 @@ aws secretsmanager put-secret-value \
   --secret-string "$(openssl rand -hex 24)"
 ```
 
+The stack also publishes a `SecretArn` output if you prefer referencing the bearer secret by ARN in automation.
+
 You may rotate the secret at any time with the same command; older tokens are invalidated immediately because the authoriser reads the secret value on first invocation of a fresh execution environment.
 
 ## Populate the OpenAI API key
@@ -69,7 +69,7 @@ aws secretsmanager put-secret-value \
   --secret-string "$OPENAI_API_KEY"
 ```
 
-If you pass the `ExistingOpenAiSecretArn`/`ExistingOpenAiSecretName` parameters, the stack references the secret you supply instead and skips creating a new one—ensure it already holds the correct API key value.
+If either secret already exists with the same name, the stack automatically reuses it instead of creating a new Secrets Manager entry.
 
 The Lambda that calls OpenAI reads both the bearer secret and this API key secret at runtime; neither value is exposed to the browser.
 

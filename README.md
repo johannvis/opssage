@@ -32,7 +32,6 @@ You can provide the account/region via environment variables or inline (e.g. `np
   - `OpssageStack:RealtimeTokenRateLimit`  
   - `OpssageStack:RealtimeModelName`
   Include the same flags in your pipeline command when you change these values.
-- **Reusing secrets (optional)**: Supply `OpssageStack:ExistingBearerSecretArn` / `OpssageStack:ExistingBearerSecretName` and/or `OpssageStack:ExistingOpenAiSecretArn` / `OpssageStack:ExistingOpenAiSecretName` if you want the stack to reference pre-created Secrets Manager entries instead of creating new ones.
 - **Client configuration**: Front-end callers must supply the bearer secret in the `Authorization` header when requesting `/secure/ping` or `/secure/realtime-token`.
 
 ### Populate secrets after deployment
@@ -42,6 +41,10 @@ STACK_NAME="${STACK_NAME:-OpssageStack}"
 SECRET_NAME=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
   --query "Stacks[0].Outputs[?OutputKey=='SecretName'].OutputValue" \
+  --output text)
+SECRET_ARN=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  --query "Stacks[0].Outputs[?OutputKey=='SecretArn'].OutputValue" \
   --output text)
 OPENAI_SECRET_ARN=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
@@ -58,8 +61,8 @@ aws secretsmanager put-secret-value \
 ```
 
 Repeat the commands whenever you rotate either credential.
-
-If you deploy with the optional `Existing*` secret parameters, skip the creation commands and ensure the referenced secrets already contain the desired values.
+The stack automatically reuses existing secrets with the same names if they are present, so adjust the commands above only when you truly want to overwrite the stored values.
+A `SecretArn` output is also available if you prefer updating the bearer secret by ARN instead of name.
 
 ## GitHub Actions IAM setup
 
