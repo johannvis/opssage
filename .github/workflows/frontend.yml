@@ -1,14 +1,6 @@
 name: Frontend CI
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend.yml'
-      - 'README.md'
-      - 'gpt-actions-aws/lib/src/realtime_token.py'
   workflow_dispatch:
 
 jobs:

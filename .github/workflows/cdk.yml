@@ -4,6 +4,15 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'bin/**'
+      - 'lib/**'
+      - 'gpt-actions-aws/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'cdk.json'
+      - '.github/workflows/cdk.yml'
   workflow_dispatch:
     inputs:
       action:

@@ -117,7 +117,7 @@ The button stays disabled until a realtime session token has been minted via **E
 
 ### CI workflow
 
-The GitHub Actions workflow in `.github/workflows/frontend.yml` runs on every push (and `workflow_dispatch`). It installs dependencies, ensures the config placeholder exists, and builds the app so infrastructure changes that affect the frontend configuration fail fast.
+The GitHub Actions workflow in `.github/workflows/frontend.yml` is available for manual runs (`workflow_dispatch`). Trigger it when you want CI to validate the build; otherwise only the CDK pipeline runs automatically.
 
 ## GitHub Actions IAM setup
 

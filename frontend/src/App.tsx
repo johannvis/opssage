@@ -36,6 +36,7 @@ const App = () => {
 
   const connectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const addLog = (direction: LogDirection, payload: unknown) => {
@@ -64,6 +65,18 @@ const App = () => {
     if (localStream) {
       localStream.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
+    }
+
+    const dc = dataChannelRef.current;
+    if (dc) {
+      try {
+        dc.onopen = null;
+        dc.onmessage = null;
+        dc.close();
+      } catch (err) {
+        // ignore
+      }
+      dataChannelRef.current = null;
     }
 
     const audio = audioRef.current;
@@ -247,6 +260,33 @@ const App = () => {
             addLog('from-gpt', { event: 'audio-play-error', message: err.message });
           });
         }
+      };
+
+      const dataChannel = pc.createDataChannel('oai-events');
+      dataChannelRef.current = dataChannel;
+
+      dataChannel.onopen = () => {
+        addLog('to-gpt', { event: 'data-channel-open' });
+        const payload = {
+          type: 'response.create',
+          response: {
+            modalities: ['audio'],
+            instructions: 'Have a natural conversation with the user. Respond out loud.',
+          },
+        };
+        dataChannel.send(JSON.stringify(payload));
+      };
+
+      dataChannel.onmessage = (event) => {
+        let parsed: unknown = event.data;
+        if (typeof event.data === 'string') {
+          try {
+            parsed = JSON.parse(event.data);
+          } catch (err) {
+            parsed = event.data;
+          }
+        }
+        addLog('from-gpt', { event: 'data-message', payload: parsed });
       };
 
       const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
