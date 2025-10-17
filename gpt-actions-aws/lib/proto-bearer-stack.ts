@@ -13,6 +13,7 @@ import {
   CorsHttpMethod,
   HttpMethod,
   CfnStage,
+  CfnRoute,
 } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import {
@@ -124,14 +125,14 @@ export class ProtoBearerStack extends Stack {
       }),
     );
 
-    httpApi.addRoutes({
+    const pingRoute = httpApi.addRoutes({
       path: '/secure/ping',
       methods: [HttpMethod.GET],
       integration: new HttpLambdaIntegration('PingIntegration', apiFunction),
       authorizer,
     });
 
-    httpApi.addRoutes({
+    const realtimeRoute = httpApi.addRoutes({
       path: '/secure/realtime-token',
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('RealtimeTokenIntegration', realtimeTokenFunction),
@@ -142,16 +143,16 @@ export class ProtoBearerStack extends Stack {
       apiId: httpApi.apiId,
       stageName: '$default',
       autoDeploy: true,
+      routeSettings: {
+        'POST /secure/realtime-token': {
+          throttlingBurstLimit: realtimeBurstLimit.valueAsNumber,
+          throttlingRateLimit: realtimeRateLimit.valueAsNumber,
+        },
+      },
     });
 
-    stage.addPropertyOverride(
-      'RouteSettings.POST ~1secure~1realtime-token.ThrottlingBurstLimit',
-      realtimeBurstLimit.valueAsNumber,
-    );
-    stage.addPropertyOverride(
-      'RouteSettings.POST ~1secure~1realtime-token.ThrottlingRateLimit',
-      realtimeRateLimit.valueAsNumber,
-    );
+    stage.node.addDependency(realtimeRoute.node.defaultChild as CfnRoute);
+    stage.node.addDependency(pingRoute.node.defaultChild as CfnRoute);
 
     realtimeTokenFunction.addEnvironment('API_BASE_URL', httpApi.apiEndpoint);
 
