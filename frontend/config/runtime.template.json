@@ -1,0 +1,4 @@
+{
+  "apiBaseUrl": "https://replace-with-api.execute-api.ap-southeast-2.amazonaws.com",
+  "realtimeModel": "gpt-4o-realtime-preview"
+}

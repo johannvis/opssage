@@ -83,6 +83,35 @@ The deletion must be triggered from the command line (or console); CDK does not 
 
 Posting to `/secure/realtime-token` mints a short-lived OpenAI Realtime session configured for voice and text streaming. The response contains the session token your browser client should pass to OpenAI’s WebRTC/WebSocket endpoint. When the model issues a `function_call` named `secure_ping`, your client is responsible for calling `/secure/ping` with the bearer token and returning the result to the model.
 
+## Frontend PoC
+
+The `frontend/` directory hosts a Vite + React proof-of-concept that exercises the secure APIs from a browser and surfaces the debug stream.
+
+### Configure
+
+1. Generate a config file with the API URL:
+   ```bash
+   cdk deploy OpssageStack --outputs-file frontend/config/runtime.json
+   ```
+   Alternatively copy `frontend/config/runtime.template.json` to `runtime.json` and fill in the `apiBaseUrl`.
+2. Install dependencies:
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+### Develop locally
+
+```bash
+npm run dev
+```
+
+Navigate to <http://localhost:5173>, paste your bearer token, and click **Enable session** to request a realtime token. The expanding debug panel colour-codes traffic `to/from aws` and `to/from gpt`.
+
+### CI workflow
+
+The GitHub Actions workflow in `.github/workflows/frontend.yml` runs on every push (and `workflow_dispatch`). It installs dependencies, ensures the config placeholder exists, and builds the app so infrastructure changes that affect the frontend configuration fail fast.
+
 ## GitHub Actions IAM setup
 
 The workflow assumes an IAM role using GitHub OIDC. Create a role in the target account named `github-actions-deploy-general` (matches `AWS_ROLE_NAME`), with:
