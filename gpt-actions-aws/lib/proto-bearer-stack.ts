@@ -13,6 +13,7 @@ import {
   CorsHttpMethod,
   HttpMethod,
   CfnStage,
+  CfnRoute,
 } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import {
@@ -124,14 +125,14 @@ export class ProtoBearerStack extends Stack {
       }),
     );
 
-    httpApi.addRoutes({
+    const pingRoutes = httpApi.addRoutes({
       path: '/secure/ping',
       methods: [HttpMethod.GET],
       integration: new HttpLambdaIntegration('PingIntegration', apiFunction),
       authorizer,
     });
 
-    httpApi.addRoutes({
+    const realtimeRoutes = httpApi.addRoutes({
       path: '/secure/realtime-token',
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('RealtimeTokenIntegration', realtimeTokenFunction),
@@ -152,6 +153,10 @@ export class ProtoBearerStack extends Stack {
       'RouteSettings.POST ~1secure~1realtime-token.ThrottlingRateLimit',
       realtimeRateLimit.valueAsNumber,
     );
+
+    for (const route of [...pingRoutes, ...realtimeRoutes]) {
+      stage.node.addDependency(route.node.defaultChild as CfnRoute);
+    }
 
     realtimeTokenFunction.addEnvironment('API_BASE_URL', httpApi.apiEndpoint);
 
