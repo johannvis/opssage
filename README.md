@@ -42,10 +42,6 @@ SECRET_NAME=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
   --query "Stacks[0].Outputs[?OutputKey=='SecretName'].OutputValue" \
   --output text)
-SECRET_ARN=$(aws cloudformation describe-stacks \
-  --stack-name "$STACK_NAME" \
-  --query "Stacks[0].Outputs[?OutputKey=='SecretArn'].OutputValue" \
-  --output text)
 OPENAI_SECRET_ARN=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
   --query "Stacks[0].Outputs[?OutputKey=='OpenAiSecretArn'].OutputValue" \
@@ -61,8 +57,27 @@ aws secretsmanager put-secret-value \
 ```
 
 Repeat the commands whenever you rotate either credential.
-The stack automatically reuses existing secrets with the same names if they are present, so adjust the commands above only when you truly want to overwrite the stored values.
-A `SecretArn` output is also available if you prefer updating the bearer secret by ARN instead of name.
+
+### Redeploying after a stack deletion
+
+CDK retains both secrets (`/<stack-name>/opssage/bearer-token` and `/<stack-name>/openai/api-key`) even after the stack is destroyed. If you delete the stack and immediately redeploy without clearing those secrets, CloudFormation still fails resource creation because Secrets Manager keeps the names reserved. CDK cannot purge them automatically, so remove them manually via the CLI before redeploying:
+
+```bash
+aws secretsmanager delete-secret \
+  --secret-id "OpssageStack/openai/api-key" \
+  --force-delete-without-recovery
+
+aws secretsmanager delete-secret \
+  --secret-id "OpssageStack/opssage/bearer-token" \
+  --force-delete-without-recovery
+
+# Legacy name from the original fork, only needed if it exists in your account.
+aws secretsmanager delete-secret \
+  --secret-id "GptapitestStack/gptapitest/bearer-token" \
+  --force-delete-without-recovery
+```
+
+The deletion must be triggered from the command line (or console); CDK does not support forcing removal of retained secrets during redeploys.
 
 ## GitHub Actions IAM setup
 

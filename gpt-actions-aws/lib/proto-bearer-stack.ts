@@ -6,9 +6,6 @@ import {
   CfnOutput,
   RemovalPolicy,
   CfnParameter,
-  CfnCondition,
-  Fn,
-  Token,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import {
@@ -25,7 +22,6 @@ import {
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import * as cr from 'aws-cdk-lib/custom-resources';
 
 export class ProtoBearerStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -34,96 +30,15 @@ export class ProtoBearerStack extends Stack {
     const secretName = `${this.stackName}/opssage/bearer-token`;
     const openAiSecretName = `${this.stackName}/openai/api-key`;
 
-    const bearerSecretLookup = new cr.AwsCustomResource(this, 'PrototypeTokenSecretLookup', {
-      onCreate: {
-        service: 'SecretsManager',
-        action: 'listSecrets',
-        parameters: {
-          Filters: [{ Key: 'name', Values: [secretName] }],
-          MaxResults: 1,
-        },
-        physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-prototype-token-secret-lookup`),
-      },
-      onUpdate: {
-        service: 'SecretsManager',
-        action: 'listSecrets',
-        parameters: {
-          Filters: [{ Key: 'name', Values: [secretName] }],
-          MaxResults: 1,
-        },
-        physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-prototype-token-secret-lookup`),
-      },
-      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
-      timeout: Duration.minutes(1),
-      installLatestAwsSdk: false,
-    });
-
-    const openAiSecretLookup = new cr.AwsCustomResource(this, 'OpenAiSecretLookup', {
-      onCreate: {
-        service: 'SecretsManager',
-        action: 'listSecrets',
-        parameters: {
-          Filters: [{ Key: 'name', Values: [openAiSecretName] }],
-          MaxResults: 1,
-        },
-        physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-openai-secret-lookup`),
-      },
-      onUpdate: {
-        service: 'SecretsManager',
-        action: 'listSecrets',
-        parameters: {
-          Filters: [{ Key: 'name', Values: [openAiSecretName] }],
-          MaxResults: 1,
-        },
-        physicalResourceId: cr.PhysicalResourceId.of(`${this.stackName}-openai-secret-lookup`),
-      },
-      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
-      timeout: Duration.minutes(1),
-      installLatestAwsSdk: false,
-    });
-
-    const existingBearerSecretArnToken = bearerSecretLookup.getResponseField('SecretList.0.ARN');
-    const existingOpenAiSecretArnToken = openAiSecretLookup.getResponseField('SecretList.0.ARN');
-
-    const createBearerSecretCondition = new CfnCondition(this, 'CreateBearerSecretCondition', {
-      expression: Fn.conditionEquals(existingBearerSecretArnToken, ''),
-    });
-
-    const createOpenAiSecretCondition = new CfnCondition(this, 'CreateOpenAiSecretCondition', {
-      expression: Fn.conditionEquals(existingOpenAiSecretArnToken, ''),
-    });
-
     const bearerSecret = new secretsmanager.Secret(this, 'PrototypeTokenSecret', {
       secretName,
     });
     bearerSecret.applyRemovalPolicy(RemovalPolicy.RETAIN);
-    const bearerSecretResource = bearerSecret.node.defaultChild as secretsmanager.CfnSecret;
-    bearerSecretResource.cfnOptions.condition = createBearerSecretCondition;
-    bearerSecretResource.node.addDependency(bearerSecretLookup);
 
     const openAiSecret = new secretsmanager.Secret(this, 'OpenAiApiKeySecret', {
       secretName: openAiSecretName,
     });
     openAiSecret.applyRemovalPolicy(RemovalPolicy.RETAIN);
-    const openAiSecretResource = openAiSecret.node.defaultChild as secretsmanager.CfnSecret;
-    openAiSecretResource.cfnOptions.condition = createOpenAiSecretCondition;
-    openAiSecretResource.node.addDependency(openAiSecretLookup);
-
-    const resolvedBearerSecretArn = Token.asString(
-      Fn.conditionIf(
-        createBearerSecretCondition.logicalId,
-        bearerSecret.secretArn,
-        existingBearerSecretArnToken,
-      ),
-    );
-
-    const resolvedOpenAiSecretArn = Token.asString(
-      Fn.conditionIf(
-        createOpenAiSecretCondition.logicalId,
-        openAiSecret.secretArn,
-        existingOpenAiSecretArnToken,
-      ),
-    );
 
     const realtimeBurstLimit = new CfnParameter(this, 'RealtimeTokenBurstLimit', {
       type: 'Number',
@@ -159,7 +74,7 @@ export class ProtoBearerStack extends Stack {
     authorizerFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['secretsmanager:GetSecretValue', 'secretsmanager:DescribeSecret'],
-        resources: [resolvedBearerSecretArn],
+        resources: [bearerSecret.secretArn],
       }),
     );
 
@@ -194,7 +109,7 @@ export class ProtoBearerStack extends Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, 'src')),
       environment: {
         SECRET_NAME: secretName,
-        OPENAI_API_KEY_SECRET_ARN: resolvedOpenAiSecretArn,
+        OPENAI_API_KEY_SECRET_ARN: openAiSecret.secretArn,
         REALTIME_MODEL: realtimeModel.valueAsString,
       },
       description: 'Mints short-lived OpenAI realtime session tokens for authorised clients',
@@ -205,7 +120,7 @@ export class ProtoBearerStack extends Stack {
     realtimeTokenFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['secretsmanager:GetSecretValue'],
-        resources: [resolvedBearerSecretArn, resolvedOpenAiSecretArn],
+        resources: [bearerSecret.secretArn, openAiSecret.secretArn],
       }),
     );
 
@@ -248,12 +163,8 @@ export class ProtoBearerStack extends Stack {
       value: secretName,
     });
 
-    new CfnOutput(this, 'SecretArn', {
-      value: resolvedBearerSecretArn,
-    });
-
     new CfnOutput(this, 'OpenAiSecretArn', {
-      value: resolvedOpenAiSecretArn,
+      value: openAiSecret.secretArn,
     });
   }
 }

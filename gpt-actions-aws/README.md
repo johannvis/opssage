@@ -69,9 +69,31 @@ aws secretsmanager put-secret-value \
   --secret-string "$OPENAI_API_KEY"
 ```
 
-If either secret already exists with the same name, the stack automatically reuses it instead of creating a new Secrets Manager entry.
-
 The Lambda that calls OpenAI reads both the bearer secret and this API key secret at runtime; neither value is exposed to the browser.
+
+### Clean up retained secrets before redeploying
+
+Destroying the stack does **not** delete the Secrets Manager entries. If you immediately redeploy without clearing them, CloudFormation fails because the secret names remain reserved. Remove them manually via the CLI before the next deploy:
+
+```bash
+aws secretsmanager delete-secret \
+  --secret-id "ProtoBearerStack/openai/api-key" \
+  --force-delete-without-recovery
+
+aws secretsmanager delete-secret \
+  --secret-id "ProtoBearerStack/opssage/bearer-token" \
+  --force-delete-without-recovery
+```
+
+If you previously deployed under the legacy `GptapitestStack` name, delete that secret as well:
+
+```bash
+aws secretsmanager delete-secret \
+  --secret-id "GptapitestStack/gptapitest/bearer-token" \
+  --force-delete-without-recovery
+```
+
+This must be handled outside CDK (CLI or console); the stack intentionally retains secrets to avoid accidental data loss.
 
 ### Lambda environment variables
 
