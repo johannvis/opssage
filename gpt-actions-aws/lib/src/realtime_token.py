@@ -18,7 +18,7 @@ _SECRETS_CLIENT = boto3.client("secretsmanager")
 _SECRET_CACHE: Dict[str, str] = {}
 
 OPENAI_RT_ENDPOINT_TEMPLATE = "https://api.openai.com/v1/realtime/sessions?model={model}"
-DEFAULT_REALTIME_MODEL = "gpt-4.1-realtime-preview"
+DEFAULT_REALTIME_MODEL = "gpt-4o-mini-realtime-preview"
 DEFAULT_TIMEOUT_SECONDS = 10
 
 

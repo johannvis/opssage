@@ -174,8 +174,6 @@ const App = () => {
         body: parsed,
       });
 
-      const sessionPayload = (parsed as { session?: RealtimeSession }).session ?? null;
-
       if (!response.ok) {
         const message =
           typeof parsed === 'object' && parsed && 'message' in parsed
@@ -185,6 +183,7 @@ const App = () => {
         return null;
       }
 
+      const sessionPayload = (parsed as { session?: RealtimeSession }).session ?? null;
       setSession(sessionPayload);
       if (sessionPayload) {
         addLog('to-gpt', {
@@ -343,13 +342,18 @@ const App = () => {
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/sdp',
+            'OpenAI-Beta': 'realtime=v1',
           },
           body: offer.sdp ?? '',
         },
       );
 
       const answerSdp = await response.text();
-      addLog('from-gpt', { event: 'webrtc-answer', status: response.status });
+      addLog('from-gpt', {
+        event: 'webrtc-answer',
+        status: response.status,
+        body: answerSdp.slice(0, 2000),
+      });
 
       if (!response.ok) {
         throw new Error(`Realtime session rejected (${response.status}): ${answerSdp}`);

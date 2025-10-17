@@ -27,7 +27,7 @@ You can provide the account/region via environment variables or inline (e.g. `np
 
 - **OpenAI API key secret**: The stack provisions an empty secret at `/<stack-name>/openai/api-key`. After deployment, update it with your OpenAI platform key: `aws secretsmanager put-secret-value --secret-id <arn> --secret-string "$OPENAI_API_KEY"`.
 - **Bearer token secret**: The stack provisions `/<stack-name>/opssage/bearer-token`. Update it with your shared bearer string via `aws secretsmanager put-secret-value`.
-- **Rate limits / model overrides** (optional): Override the following parameters if the defaults (5 burst, 10 rps, `gpt-4.1-realtime-preview`) need tuning:  
+- **Rate limits / model overrides** (optional): Override the following parameters if the defaults (5 burst, 10 rps, `gpt-4o-mini-realtime-preview`) need tuning:  
   - `OpssageStack:RealtimeTokenBurstLimit`  
   - `OpssageStack:RealtimeTokenRateLimit`  
   - `OpssageStack:RealtimeModelName`
@@ -115,7 +115,7 @@ Navigate to <http://localhost:5173>, paste your bearer token, and click **Enable
 Press **Talk** to open a WebRTC voice session: the app will request microphone access, stream audio to OpenAI using the session token, and play the model’s responses through the embedded audio player. Click **Stop talking** (or close the page) to tear the connection down.
 The button stays disabled until a realtime session token has been minted via **Enable session**, ensuring the existing token is reused for audio streaming.
 
-Use the **Realtime model** field to override the backend default (`gpt-4.1-realtime-preview`). The value you enter is stored locally and sent with each `/secure/realtime-token` request so you can test other realtime-preview model IDs or custom GPT deployments without redeploying the stack.
+Use the **Realtime model** field to override the backend default (`gpt-4o-mini-realtime-preview`). The value you enter is stored locally and sent with each `/secure/realtime-token` request so you can test other realtime-preview model IDs or custom GPT deployments without redeploying the stack.
 
 ### CI workflow
 
