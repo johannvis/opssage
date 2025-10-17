@@ -112,6 +112,8 @@ npm run dev
 
 Navigate to <http://localhost:5173>, paste your bearer token, and click **Enable session** to request a realtime token. The expanding debug panel colour-codes traffic `to/from aws` and `to/from gpt`.
 
+Press **Talk** to open a WebRTC voice session: the app will request microphone access, stream audio to OpenAI using the session token, and play the model’s responses through the embedded audio player. Click **Stop talking** (or close the page) to tear the connection down.
+
 ### CI workflow
 
 The GitHub Actions workflow in `.github/workflows/frontend.yml` runs on every push (and `workflow_dispatch`). It installs dependencies, ensures the config placeholder exists, and builds the app so infrastructure changes that affect the frontend configuration fail fast.

@@ -68,6 +68,33 @@ header p {
   flex-wrap: wrap;
 }
 
+button.talk {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 0.85rem 2rem;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #0f172a;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+button.talk.active {
+  background: linear-gradient(135deg, #f97316, #fb7185);
+  color: white;
+}
+
+button.talk:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+button.talk:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(34, 197, 94, 0.35);
+}
+
 button.primary {
   appearance: none;
   border: none;
@@ -263,6 +290,17 @@ button.secondary:not(:disabled):hover {
 footer {
   margin-top: auto;
   color: #64748b;
+}
+
+.remote-audio {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  width: 260px;
+  opacity: 0.75;
+  backdrop-filter: blur(6px);
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 code {

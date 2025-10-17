@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { config } from './config';
 import { DebugPanel, LogDirection, LogEntry } from './components/DebugPanel';
 
@@ -23,6 +23,12 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showBearer, setShowBearer] = useState(false);
+  const [isTalking, setIsTalking] = useState(false);
+  const [talkBusy, setTalkBusy] = useState(false);
+
+  const connectionRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const addLog = (direction: LogDirection, payload: unknown) => {
     setLogs((prev) => [
@@ -36,15 +42,64 @@ const App = () => {
     ]);
   };
 
-  const handleEnableSession = async () => {
-    if (!bearer) {
-      setError('Add a bearer token before requesting a session.');
-      return;
+  const stopVoiceSession = () => {
+    const pc = connectionRef.current;
+    if (pc) {
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.oniceconnectionstatechange = null;
+      pc.close();
+      connectionRef.current = null;
     }
 
-    setLoading(true);
+    const localStream = localStreamRef.current;
+    if (localStream) {
+      localStream.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+
+    const audio = audioRef.current;
+    if (audio) {
+      audio.srcObject = null;
+    }
+
+    if (isTalking) {
+      addLog('from-gpt', { event: 'voice-session-stopped' });
+    }
+    setIsTalking(false);
+    setTalkBusy(false);
+  };
+
+  useEffect(
+    () => () => {
+      stopVoiceSession();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const requestRealtimeSession = async (
+    options: { reset?: boolean; showSpinner?: boolean } = {},
+  ): Promise<SessionResponse | null> => {
+    const { reset = true, showSpinner = true } = options;
+
+    if (!bearer) {
+      setError('Add a bearer token before requesting a session.');
+      return null;
+    }
+
+    if (!config.apiBaseUrl) {
+      setError('API base URL is not configured.');
+      return null;
+    }
+
+    if (showSpinner) {
+      setLoading(true);
+    }
+    if (reset) {
+      setSession(null);
+    }
     setError(null);
-    setSession(null);
 
     const url = `${config.apiBaseUrl}/secure/realtime-token`;
 
@@ -84,23 +139,37 @@ const App = () => {
             ? String((parsed as Record<string, unknown>).message)
             : `Request failed with status ${response.status}`;
         setError(message);
-        return;
+        return null;
       }
 
-      setSession((parsed as SessionResponse) ?? {});
+      setSession((parsed as SessionResponse) ?? null);
       if (parsed && typeof parsed === 'object' && 'session' in parsed) {
         addLog('to-gpt', {
           hint: 'Use this session to open a WebRTC connection with OpenAI.',
           session: (parsed as SessionResponse).session,
         });
       }
+
+      return (parsed as SessionResponse) ?? null;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
       addLog('from-aws', { error: message });
+      return null;
     } finally {
-      setLoading(false);
+      if (showSpinner) {
+        setLoading(false);
+      }
     }
+  };
+
+  const handleEnableSession = async () => {
+    if (!bearer) {
+      setError('Add a bearer token before requesting a session.');
+      return;
+    }
+
+    await requestRealtimeSession();
   };
 
   const sessionPreview = useMemo(() => {
@@ -129,6 +198,127 @@ const App = () => {
       </div>
     );
   }, [session]);
+
+  const startVoiceSession = async (token: string) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError('Browser does not support audio capture.');
+      return;
+    }
+
+    setIsTalking(true);
+    setTalkBusy(true);
+
+    try {
+      addLog('to-gpt', { event: 'voice-session-start' });
+
+      const pc = new RTCPeerConnection();
+      connectionRef.current = pc;
+
+      pc.onconnectionstatechange = () => {
+        addLog('from-gpt', { event: 'connection-state', state: pc.connectionState });
+        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          stopVoiceSession();
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        addLog('from-gpt', {
+          event: 'ice-state',
+          state: pc.iceConnectionState,
+        });
+      };
+
+      pc.ontrack = (event) => {
+        addLog('from-gpt', { event: 'audio-track', streams: event.streams.length });
+        const audio = audioRef.current;
+        if (audio) {
+          audio.srcObject = event.streams[0];
+          void audio.play().catch((err) => {
+            addLog('from-gpt', { event: 'audio-play-error', message: err.message });
+          });
+        }
+      };
+
+      const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      localStreamRef.current = localStream;
+      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+      pc.addTransceiver('audio', { direction: 'sendrecv' });
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Wait for ICE gathering to complete before sending the offer
+      await new Promise<void>((resolve) => {
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+        } else {
+          const checkState = () => {
+            if (pc.iceGatheringState === 'complete') {
+              pc.removeEventListener('icegatheringstatechange', checkState);
+              resolve();
+            }
+          };
+          pc.addEventListener('icegatheringstatechange', checkState);
+        }
+      });
+
+      addLog('to-gpt', { event: 'webrtc-offer-created' });
+
+      const response = await fetch(
+        `https://api.openai.com/v1/realtime?model=${config.realtimeModel}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/sdp',
+          },
+          body: offer.sdp ?? '',
+        },
+      );
+
+      const answerSdp = await response.text();
+      addLog('from-gpt', { event: 'webrtc-answer', status: response.status });
+
+      if (!response.ok) {
+        throw new Error(`Realtime session rejected (${response.status}): ${answerSdp}`);
+      }
+
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      addLog('from-gpt', { error: message });
+      stopVoiceSession();
+    } finally {
+      setTalkBusy(false);
+    }
+  };
+
+  const handleTalk = async () => {
+    if (isTalking || talkBusy) {
+      stopVoiceSession();
+      return;
+    }
+
+    if (!bearer) {
+      setError('Add a bearer token before starting a voice session.');
+      return;
+    }
+
+    let activeSession = session;
+    if (!activeSession?.client_secret?.value) {
+      const refreshed = await requestRealtimeSession({ reset: false, showSpinner: false });
+      activeSession = refreshed;
+    }
+
+    const token = activeSession?.client_secret?.value;
+    if (!token) {
+      setError('Failed to obtain realtime session token.');
+      return;
+    }
+
+    await startVoiceSession(token);
+  };
 
   return (
     <div className="app-shell">
@@ -176,6 +366,14 @@ const App = () => {
           >
             Clear logs
           </button>
+          <button
+            type="button"
+            className={`talk ${isTalking ? 'active' : ''}`}
+            onClick={handleTalk}
+            disabled={loading || talkBusy}
+          >
+            {isTalking ? 'Stop talking' : 'Talk'}
+          </button>
         </div>
 
         {error ? <p className="error">{error}</p> : null}
@@ -196,6 +394,8 @@ const App = () => {
           API base URL: <code>{config.apiBaseUrl || 'not configured'}</code>
         </small>
       </footer>
+
+      <audio ref={audioRef} autoPlay className="remote-audio" controls />
     </div>
   );
 };

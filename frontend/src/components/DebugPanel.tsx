@@ -25,7 +25,7 @@ const directionLabel: Record<LogDirection, string> = {
   'from-aws': 'from aws',
 };
 
-export const DebugPanel: React.FC<Props> = ({ logs, open, onToggle, onClear, canClear }) => {
+export const DebugPanel = ({ logs, open, onToggle, onClear, canClear }: Props) => {
   const content = useMemo(
     () =>
       logs.map((log) => {
