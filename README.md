@@ -101,7 +101,7 @@ The `frontend/` directory hosts a Vite + React proof-of-concept that exercises t
    cd frontend
    npm install
    ```
-   The root and `frontend/` `node_modules` directories are ignored via `.gitignore`, so you can install locally without tracking the generated files.
+   The root and `frontend/` `node_modules` directories are ignored via `.gitignore`, so you can install locally without tracking the generated files. If `npm` drops a `frontend/package-lock.json`, remove it (`rm frontend/package-lock.json`) before committing to keep the repo lockfile-free.
 
 ### Develop locally
 
