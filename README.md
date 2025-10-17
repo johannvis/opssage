@@ -79,6 +79,10 @@ aws secretsmanager delete-secret \
 
 The deletion must be triggered from the command line (or console); CDK does not support forcing removal of retained secrets during redeploys.
 
+### Realtime session tokens
+
+Posting to `/secure/realtime-token` mints a short-lived OpenAI Realtime session configured for voice and text streaming. The response contains the session token your browser client should pass to OpenAI’s WebRTC/WebSocket endpoint. When the model issues a `function_call` named `secure_ping`, your client is responsible for calling `/secure/ping` with the bearer token and returning the result to the model.
+
 ## GitHub Actions IAM setup
 
 The workflow assumes an IAM role using GitHub OIDC. Create a role in the target account named `github-actions-deploy-general` (matches `AWS_ROLE_NAME`), with:

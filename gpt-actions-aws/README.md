@@ -95,6 +95,10 @@ aws secretsmanager delete-secret \
 
 This must be handled outside CDK (CLI or console); the stack intentionally retains secrets to avoid accidental data loss.
 
+## Mint realtime tokens for the browser
+
+The stack exposes a secured route, `POST /secure/realtime-token`, that returns an OpenAI Realtime session token suitable for WebRTC/WebSocket connections. The Lambda configures the session for audio and text, and defines a `secure_ping` function the model can invoke. When that tool is called, your client (or a backend helper) should hit `/secure/ping` with the bearer token and feed the response back to the Realtime stream.
+
 ### Lambda environment variables
 
 The stack wires the following variables into the realtime token Lambda. They are documented here in case you need to override them in future enhancements:

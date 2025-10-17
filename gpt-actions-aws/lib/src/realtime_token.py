@@ -6,7 +6,7 @@ import base64
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from urllib import error, request
 
 import boto3
@@ -17,7 +17,7 @@ LOGGER.setLevel(logging.INFO)
 _SECRETS_CLIENT = boto3.client("secretsmanager")
 _SECRET_CACHE: Dict[str, str] = {}
 
-OPENAI_REALTIME_ENDPOINT = "https://api.openai.com/v1/realtime/sessions"
+OPENAI_RT_ENDPOINT_TEMPLATE = "https://api.openai.com/v1/realtime/sessions?model={model}"
 DEFAULT_TIMEOUT_SECONDS = 10
 
 
@@ -48,75 +48,6 @@ def _decode_body(event: Dict[str, Any]) -> Dict[str, Any]:
         return json.loads(body)
     except json.JSONDecodeError:
         return {}
-
-
-def _build_openapi_spec(base_url: Optional[str]) -> Dict[str, Any]:
-    """Inline the OpenAPI schema used by GPT when calling the secure API."""
-    # Keep in sync with gpt-actions-aws/openapi.yaml
-    return {
-        "openapi": "3.0.1",
-        "info": {
-            "title": "Proto Bearer API",
-            "version": "1.0.0",
-            "description": "Minimal bearer-protected API for GPT Actions prototyping.",
-        },
-        "servers": [
-            {
-                "url": base_url or "https://example.com",
-                "description": "Replaced with the runtime ApiBaseUrl when available.",
-            }
-        ],
-        "paths": {
-            "/secure/ping": {
-                "get": {
-                    "operationId": "ping",
-                    "summary": "Return the secure ping response.",
-                    "description": (
-                        "Require a bearer token that matches the secret held in AWS Secrets Manager. "
-                        "Echo the optional `number` query attribute in the response message."
-                    ),
-                    "parameters": [
-                        {
-                            "in": "query",
-                            "name": "number",
-                            "schema": {"type": "string"},
-                            "required": False,
-                            "description": "Optional value that will be echoed back if provided.",
-                        }
-                    ],
-                    "responses": {
-                        "200": {
-                            "description": "Successful ping response.",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "ok": {"type": "boolean"},
-                                            "path": {"type": "string"},
-                                            "requestId": {"type": "string"},
-                                            "message": {"type": "string"},
-                                        },
-                                        "required": ["ok", "path", "requestId", "message"],
-                                    }
-                                }
-                            },
-                        },
-                        "401": {"description": "Missing or invalid bearer token."},
-                    },
-                }
-            }
-        },
-        "components": {
-            "securitySchemes": {
-                "bearerAuth": {
-                    "type": "http",
-                    "scheme": "bearer",
-                }
-            }
-        },
-        "security": [{"bearerAuth": []}],
-    }
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -150,14 +81,22 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         }
 
     session_payload: Dict[str, Any] = {
-        "model": realtime_model,
+        "modalities": ["audio", "text"],
         "tools": [
             {
-                "type": "openapi",
+                "type": "function",
                 "name": "secure_ping",
                 "description": "Echo numbers via the secure ping endpoint.",
-                "spec": _build_openapi_spec(api_base_url),
-                "auth": {"type": "bearer", "token": bearer_token},
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "number": {
+                            "type": "string",
+                            "description": "Optional value that will be echoed back",
+                        }
+                    },
+                    "required": [],
+                },
             }
         ],
     }
@@ -171,8 +110,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     LOGGER.info("Requesting realtime session for model %s", realtime_model)
 
+    request_url = OPENAI_RT_ENDPOINT_TEMPLATE.format(model=realtime_model)
+
     req = request.Request(
-        OPENAI_REALTIME_ENDPOINT,
+        request_url,
         data=json.dumps(session_payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {openai_api_key}",
