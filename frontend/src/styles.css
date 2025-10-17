@@ -34,6 +34,23 @@ header p {
   gap: 1rem;
 }
 
+.controls.model {
+  margin-top: -0.5rem;
+}
+
+.controls.model label {
+  gap: 0.4rem;
+}
+
+.controls.model input {
+  width: 100%;
+}
+
+.controls.model small {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
 .controls label {
   display: flex;
   flex-direction: column;

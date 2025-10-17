@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { config } from './config';
+import { config, defaultRealtimeModel } from './config';
 import { DebugPanel, LogDirection, LogEntry } from './components/DebugPanel';
 
 type ClientSecret = {
@@ -23,6 +23,18 @@ const generateId = () => {
 const resolveToken = (payload: RealtimeSession | null) =>
   payload?.client_secret?.value ?? payload?.client_secret?.token ?? '';
 
+const MODEL_STORAGE_KEY = 'opssage:model-override';
+
+const initialModelValue = () => {
+  if (typeof window !== 'undefined') {
+    const stored = window.localStorage.getItem(MODEL_STORAGE_KEY);
+    if (stored && stored.trim()) {
+      return stored.trim();
+    }
+  }
+  return defaultRealtimeModel;
+};
+
 const App = () => {
   const [bearer, setBearer] = useState('');
   const [session, setSession] = useState<RealtimeSession | null>(null);
@@ -33,6 +45,7 @@ const App = () => {
   const [showBearer, setShowBearer] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
   const [talkBusy, setTalkBusy] = useState(false);
+  const [model, setModel] = useState(initialModelValue);
 
   const connectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -99,6 +112,12 @@ const App = () => {
     [],
   );
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(MODEL_STORAGE_KEY, model);
+    }
+  }, [model]);
+
   const requestRealtimeSession = async (
     options: { reset?: boolean; showSpinner?: boolean } = {},
   ): Promise<RealtimeSession | null> => {
@@ -123,12 +142,13 @@ const App = () => {
     setError(null);
 
     const url = `${config.apiBaseUrl}/secure/realtime-token`;
+    const activeModel = model.trim() || config.realtimeModel;
 
     addLog('to-aws', {
       url,
       method: 'POST',
       headers: { Authorization: 'Bearer ***redacted***' },
-      body: {},
+      body: { model: activeModel },
     });
 
     try {
@@ -138,7 +158,7 @@ const App = () => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${bearer}`,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ model: activeModel }),
       });
 
       const text = await response.text();
@@ -201,11 +221,12 @@ const App = () => {
     }
 
     const secret = resolveToken(session);
+    const activeModel = model.trim() || config.realtimeModel;
     return (
       <div className="session-preview">
         <h2>Realtime Session</h2>
         <p className="session-info">
-          Model: <code>{config.realtimeModel}</code>
+          Model: <code>{session?.model ?? activeModel}</code>
         </p>
         {secret ? (
           <div className="session-token">
@@ -270,7 +291,7 @@ const App = () => {
         const payload = {
           type: 'response.create',
           response: {
-            modalities: ['audio'],
+            modalities: ['audio', 'text'],
             instructions: 'Have a natural conversation with the user. Respond out loud.',
           },
         };
@@ -314,8 +335,9 @@ const App = () => {
 
       addLog('to-gpt', { event: 'webrtc-offer-created' });
 
+      const activeModel = model.trim() || config.realtimeModel;
       const response = await fetch(
-        `https://api.openai.com/v1/realtime?model=${config.realtimeModel}`,
+        `https://api.openai.com/v1/realtime?model=${activeModel}`,
         {
           method: 'POST',
           headers: {
@@ -355,12 +377,14 @@ const App = () => {
       return;
     }
 
+    const activeModel = model.trim() || config.realtimeModel;
     const token = resolveToken(session);
     if (!token) {
       setError('Enable the session first to mint a realtime token.');
       return;
     }
 
+    addLog('to-gpt', { event: 'selected-model', model: activeModel });
     await startVoiceSession(token);
   };
 
@@ -421,6 +445,23 @@ const App = () => {
         </div>
 
         {error ? <p className="error">{error}</p> : null}
+      </section>
+
+      <section className="controls model">
+        <label htmlFor="model-input">
+          Realtime model
+          <input
+            id="model-input"
+            type="text"
+            placeholder={defaultRealtimeModel}
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+          />
+          <small>
+            Override the backend model (current default: <code>{defaultRealtimeModel}</code>). The value
+            is stored locally for convenience.
+          </small>
+        </label>
       </section>
 
       {sessionPreview}

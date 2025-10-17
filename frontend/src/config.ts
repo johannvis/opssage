@@ -35,8 +35,10 @@ const derived = deriveConfig();
 
 export const config = {
   apiBaseUrl: derived.apiBaseUrl ?? '',
-  realtimeModel: derived.realtimeModel ?? 'gpt-4o-realtime-preview',
+  realtimeModel: derived.realtimeModel ?? 'gpt-4.1-realtime-preview',
 };
+
+export const defaultRealtimeModel = config.realtimeModel;
 
 if (!config.apiBaseUrl) {
   console.warn(

@@ -18,6 +18,7 @@ _SECRETS_CLIENT = boto3.client("secretsmanager")
 _SECRET_CACHE: Dict[str, str] = {}
 
 OPENAI_RT_ENDPOINT_TEMPLATE = "https://api.openai.com/v1/realtime/sessions?model={model}"
+DEFAULT_REALTIME_MODEL = "gpt-4.1-realtime-preview"
 DEFAULT_TIMEOUT_SECONDS = 10
 
 
@@ -63,11 +64,12 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     instructions = body.get("instructions")
     voice = body.get("voice")
     expires_in = body.get("expires_in")
+    requested_model = body.get("model")
 
     api_base_url = os.environ.get("API_BASE_URL")
     bearer_secret_arn = os.environ["SECRET_NAME"]
     openai_secret_arn = os.environ["OPENAI_API_KEY_SECRET_ARN"]
-    realtime_model = os.environ.get("REALTIME_MODEL", "gpt-4o-realtime-preview")
+    realtime_model = (requested_model or os.environ.get("REALTIME_MODEL") or DEFAULT_REALTIME_MODEL).strip()
 
     try:
         bearer_token = _get_secret(bearer_secret_arn)
