@@ -115,7 +115,7 @@ Navigate to <http://localhost:5173>, paste your bearer token, and click **Enable
 Press **Talk** to open a WebRTC voice session: the app will request microphone access, stream audio to OpenAI using the session token, and play the model’s responses through the embedded audio player. Click **Stop talking** (or close the page) to tear the connection down.
 The button stays disabled until a realtime session token has been minted via **Enable session**, ensuring the existing token is reused for audio streaming.
 
-Use the **Realtime model** field to override the backend default (`gpt-4o-mini-realtime-preview`). The value you enter is stored locally and sent with each `/secure/realtime-token` request so you can test other realtime-preview model IDs or custom GPT deployments without redeploying the stack.
+Use the **Realtime model** field to override the backend default (`gpt-4o-mini-realtime-preview`). The value you enter is stored locally and sent with each `/secure/realtime-token` request so you can test other realtime-preview model IDs or custom GPT deployments. To obtain a custom GPT’s model ID: open https://chat.openai.com/gpts, select **Edit GPT**, and in the builder click the ⋮ menu near Update/Share, then choose “View API details”. Copy the string that looks like `gpt://custom-gpt/dpl_…` and paste it into this field.
 
 ### CI workflow
 
