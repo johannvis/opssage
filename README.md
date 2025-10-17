@@ -81,7 +81,7 @@ The deletion must be triggered from the command line (or console); CDK does not 
 
 ### Realtime session tokens
 
-Posting to `/secure/realtime-token` mints a short-lived OpenAI Realtime session configured for voice and text streaming. The response contains the session token your browser client should pass to OpenAI’s WebRTC/WebSocket endpoint. When the model issues a `function_call` named `secure_ping`, your client is responsible for calling `/secure/ping` with the bearer token and returning the result to the model.
+Posting to `/secure/realtime-token` mints a short-lived OpenAI Realtime session configured for voice and text streaming. The response contains the session token your browser client should pass to OpenAI’s WebRTC/WebSocket endpoint. The default payload now omits function tools so the conversation behaves like a normal voice chat; add tools if you need GPT to call back into your APIs.
 
 ## Frontend PoC
 
@@ -113,6 +113,7 @@ npm run dev
 Navigate to <http://localhost:5173>, paste your bearer token, and click **Enable session** to request a realtime token. The expanding debug panel colour-codes traffic `to/from aws` and `to/from gpt`.
 
 Press **Talk** to open a WebRTC voice session: the app will request microphone access, stream audio to OpenAI using the session token, and play the model’s responses through the embedded audio player. Click **Stop talking** (or close the page) to tear the connection down.
+The button stays disabled until a realtime session token has been minted via **Enable session**, ensuring the existing token is reused for audio streaming.
 
 ### CI workflow
 

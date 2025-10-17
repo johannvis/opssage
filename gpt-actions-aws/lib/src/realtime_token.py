@@ -82,23 +82,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     session_payload: Dict[str, Any] = {
         "modalities": ["audio", "text"],
-        "tools": [
-            {
-                "type": "function",
-                "name": "secure_ping",
-                "description": "Echo numbers via the secure ping endpoint.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "number": {
-                            "type": "string",
-                            "description": "Optional value that will be echoed back",
-                        }
-                    },
-                    "required": [],
-                },
-            }
-        ],
     }
 
     if instructions:

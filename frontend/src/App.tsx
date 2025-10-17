@@ -2,9 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { config } from './config';
 import { DebugPanel, LogDirection, LogEntry } from './components/DebugPanel';
 
-type SessionResponse = {
-  session?: Record<string, unknown>;
-  client_secret?: { value?: string };
+type ClientSecret = {
+  value?: string;
+  token?: string;
+};
+
+type RealtimeSession = {
+  id?: string;
+  client_secret?: ClientSecret;
   [key: string]: unknown;
 };
 
@@ -15,9 +20,12 @@ const generateId = () => {
   return Math.random().toString(36).slice(2);
 };
 
+const resolveToken = (payload: RealtimeSession | null) =>
+  payload?.client_secret?.value ?? payload?.client_secret?.token ?? '';
+
 const App = () => {
   const [bearer, setBearer] = useState('');
-  const [session, setSession] = useState<SessionResponse | null>(null);
+  const [session, setSession] = useState<RealtimeSession | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [panelOpen, setPanelOpen] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -80,7 +88,7 @@ const App = () => {
 
   const requestRealtimeSession = async (
     options: { reset?: boolean; showSpinner?: boolean } = {},
-  ): Promise<SessionResponse | null> => {
+  ): Promise<RealtimeSession | null> => {
     const { reset = true, showSpinner = true } = options;
 
     if (!bearer) {
@@ -133,6 +141,8 @@ const App = () => {
         body: parsed,
       });
 
+      const sessionPayload = (parsed as { session?: RealtimeSession }).session ?? null;
+
       if (!response.ok) {
         const message =
           typeof parsed === 'object' && parsed && 'message' in parsed
@@ -142,15 +152,15 @@ const App = () => {
         return null;
       }
 
-      setSession((parsed as SessionResponse) ?? null);
-      if (parsed && typeof parsed === 'object' && 'session' in parsed) {
+      setSession(sessionPayload);
+      if (sessionPayload) {
         addLog('to-gpt', {
           hint: 'Use this session to open a WebRTC connection with OpenAI.',
-          session: (parsed as SessionResponse).session,
+          session: sessionPayload,
         });
       }
 
-      return (parsed as SessionResponse) ?? null;
+      return sessionPayload;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -177,7 +187,7 @@ const App = () => {
       return null;
     }
 
-    const secret = session?.client_secret?.value;
+    const secret = resolveToken(session);
     return (
       <div className="session-preview">
         <h2>Realtime Session</h2>
@@ -305,15 +315,9 @@ const App = () => {
       return;
     }
 
-    let activeSession = session;
-    if (!activeSession?.client_secret?.value) {
-      const refreshed = await requestRealtimeSession({ reset: false, showSpinner: false });
-      activeSession = refreshed;
-    }
-
-    const token = activeSession?.client_secret?.value;
+    const token = resolveToken(session);
     if (!token) {
-      setError('Failed to obtain realtime session token.');
+      setError('Enable the session first to mint a realtime token.');
       return;
     }
 
@@ -370,7 +374,7 @@ const App = () => {
             type="button"
             className={`talk ${isTalking ? 'active' : ''}`}
             onClick={handleTalk}
-            disabled={loading || talkBusy}
+            disabled={loading || talkBusy || !resolveToken(session)}
           >
             {isTalking ? 'Stop talking' : 'Talk'}
           </button>
