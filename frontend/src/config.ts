@@ -1,19 +1,45 @@
 import runtime from '../config/runtime.json';
 
-interface RuntimeConfig {
+type FlatConfig = {
   apiBaseUrl?: string;
   realtimeModel?: string;
-}
+};
 
-const runtimeConfig = runtime as RuntimeConfig;
+type CdkOutputs = Record<
+  string,
+  {
+    ApiBaseUrl?: string;
+    RealtimeModelName?: string;
+  }
+>;
+
+const deriveConfig = (): FlatConfig => {
+  if ('apiBaseUrl' in runtime || 'realtimeModel' in runtime) {
+    return runtime as FlatConfig;
+  }
+
+  const outputs = runtime as CdkOutputs;
+  const firstKey = Object.keys(outputs)[0];
+  if (!firstKey) {
+    return {};
+  }
+
+  const entry = outputs[firstKey];
+  return {
+    apiBaseUrl: entry?.ApiBaseUrl,
+    realtimeModel: entry?.RealtimeModelName,
+  };
+};
+
+const derived = deriveConfig();
 
 export const config = {
-  apiBaseUrl: runtimeConfig.apiBaseUrl ?? '',
-  realtimeModel: runtimeConfig.realtimeModel ?? 'gpt-4o-realtime-preview',
+  apiBaseUrl: derived.apiBaseUrl ?? '',
+  realtimeModel: derived.realtimeModel ?? 'gpt-4o-realtime-preview',
 };
 
 if (!config.apiBaseUrl) {
   console.warn(
-    'Opssage frontend: config.apiBaseUrl is empty. Provide a value in frontend/config/runtime.json.',
+    'Opssage frontend: config.apiBaseUrl is empty. Update frontend/config/runtime.json with ApiBaseUrl.',
   );
 }

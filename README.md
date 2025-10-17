@@ -91,18 +91,22 @@ The `frontend/` directory hosts a Vite + React proof-of-concept that exercises t
 
 1. Generate a config file with the API URL:
    ```bash
-   cdk deploy OpssageStack --outputs-file frontend/config/runtime.json
+   npm install             # only required once to install repo deps
+   npx cdk deploy OpssageStack --outputs-file frontend/config/runtime.json
    ```
    Alternatively copy `frontend/config/runtime.template.json` to `runtime.json` and fill in the `apiBaseUrl`.
-2. Install dependencies:
+   The frontend loader accepts both flattened config (`{ "apiBaseUrl": "…" }`) and the raw CDK outputs JSON; it will extract `ApiBaseUrl` automatically.
+2. Install dependencies (run inside `frontend/`):
    ```bash
    cd frontend
    npm install
    ```
+   The root and `frontend/` `node_modules` directories are ignored via `.gitignore`, so you can install locally without tracking the generated files.
 
 ### Develop locally
 
 ```bash
+cd frontend
 npm run dev
 ```
 

@@ -22,6 +22,7 @@ const App = () => {
   const [panelOpen, setPanelOpen] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showBearer, setShowBearer] = useState(false);
 
   const addLog = (direction: LogDirection, payload: unknown) => {
     setLogs((prev) => [
@@ -140,27 +141,55 @@ const App = () => {
       </header>
 
       <section className="controls">
-        <label htmlFor="bearer-input">
-          Bearer token
-          <input
-            id="bearer-input"
-            type="password"
-            placeholder="Paste bearer token"
-            value={bearer}
-            onChange={(event) => setBearer(event.target.value)}
-          />
-        </label>
+        <div className="bearer-row">
+          <label htmlFor="bearer-input">
+            Bearer token
+            <div className="bearer-input-wrapper">
+              <input
+                id="bearer-input"
+                type={showBearer ? 'text' : 'password'}
+                placeholder="Paste bearer token"
+                value={bearer}
+                onChange={(event) => setBearer(event.target.value)}
+              />
+            </div>
+          </label>
+          <label className="show-bearer">
+            <input
+              type="checkbox"
+              checked={showBearer}
+              onChange={(event) => setShowBearer(event.target.checked)}
+            />
+            Show bearer
+          </label>
+        </div>
 
-        <button className="primary" onClick={handleEnableSession} disabled={loading}>
-          {loading ? 'Requesting session…' : 'Enable session'}
-        </button>
+        <div className="action-row">
+          <button className="primary" onClick={handleEnableSession} disabled={loading}>
+            {loading ? 'Requesting session…' : 'Enable session'}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setLogs([])}
+            disabled={logs.length === 0}
+          >
+            Clear logs
+          </button>
+        </div>
 
         {error ? <p className="error">{error}</p> : null}
       </section>
 
       {sessionPreview}
 
-      <DebugPanel logs={logs} open={panelOpen} onToggle={() => setPanelOpen((prev) => !prev)} />
+      <DebugPanel
+        logs={logs}
+        open={panelOpen}
+        onToggle={() => setPanelOpen((prev) => !prev)}
+        onClear={() => setLogs([])}
+        canClear={logs.length > 0}
+      />
 
       <footer>
         <small>

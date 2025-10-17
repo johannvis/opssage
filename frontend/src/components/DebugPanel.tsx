@@ -14,6 +14,8 @@ interface Props {
   logs: LogEntry[];
   open: boolean;
   onToggle: () => void;
+  onClear: () => void;
+  canClear: boolean;
 }
 
 const directionLabel: Record<LogDirection, string> = {
@@ -23,7 +25,7 @@ const directionLabel: Record<LogDirection, string> = {
   'from-aws': 'from aws',
 };
 
-export const DebugPanel: React.FC<Props> = ({ logs, open, onToggle }) => {
+export const DebugPanel: React.FC<Props> = ({ logs, open, onToggle, onClear, canClear }) => {
   const content = useMemo(
     () =>
       logs.map((log) => {
@@ -47,10 +49,15 @@ export const DebugPanel: React.FC<Props> = ({ logs, open, onToggle }) => {
 
   return (
     <section className={`debug-panel ${open ? 'open' : 'closed'}`}>
-      <button type="button" className="toggle" onClick={onToggle}>
-        {open ? 'Hide debug' : 'Show debug'}
-      </button>
-      {open ? <div className="log-scroll">{content}</div> : null}
+      <div className="panel-header">
+        <button type="button" className="toggle" onClick={onToggle}>
+          {open ? 'Hide debug' : 'Show debug'}
+        </button>
+        <button type="button" className="clear" onClick={onClear} disabled={!canClear}>
+          Clear
+        </button>
+      </div>
+     {open ? <div className="log-scroll">{content}</div> : null}
     </section>
   );
 };

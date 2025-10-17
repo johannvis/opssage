@@ -55,6 +55,19 @@ header p {
   border-color: transparent;
 }
 
+.controls .show-bearer {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+.action-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 button.primary {
   appearance: none;
   border: none;
@@ -75,6 +88,28 @@ button.primary:disabled {
 button.primary:not(:disabled):hover {
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(14, 165, 233, 0.25);
+}
+
+button.secondary {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 999px;
+  padding: 0.75rem 1.8rem;
+  background: transparent;
+  color: #cbd5f5;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+button.secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.secondary:not(:disabled):hover {
+  border-color: #38bdf8;
+  color: #38bdf8;
 }
 
 .error {
@@ -144,6 +179,41 @@ button.primary:not(:disabled):hover {
   padding: 0.9rem 1.25rem;
   text-align: left;
   cursor: pointer;
+}
+
+.debug-panel .panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding-right: 0.75rem;
+}
+
+.debug-panel .panel-header .toggle {
+  flex: 1;
+}
+
+.debug-panel button.clear {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  padding: 0.6rem 1rem;
+  background: rgba(15, 23, 42, 0.6);
+  color: #cbd5f5;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.debug-panel button.clear:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.debug-panel button.clear:not(:disabled):hover {
+  border-color: #38bdf8;
+  color: #38bdf8;
 }
 
 .log-scroll {
