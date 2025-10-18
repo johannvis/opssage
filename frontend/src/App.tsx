@@ -26,8 +26,6 @@ const resolveToken = (payload: RealtimeSession | null) =>
 const MODEL_STORAGE_KEY = 'opssage:model-override';
 const WAKE_PHRASE = 'hey model test';
 const COMPLETE_KEYWORD = 'complete';
-const TEXT_KEYS = new Set(['text', 'transcript', 'caption']);
-
 const initialModelValue = () => {
   if (typeof window !== 'undefined') {
     const stored = window.localStorage.getItem(MODEL_STORAGE_KEY);
@@ -57,6 +55,9 @@ const App = () => {
   const captureStateRef = useRef<'idle' | 'awaiting'>('idle');
   const captureBufferRef = useRef('');
   const lastUserUtteranceRef = useRef<string | null>(null);
+  const speechRecognitionRef = useRef<any>(null);
+  const speechRestartTimeoutRef = useRef<number | null>(null);
+  const isTalkingRef = useRef(false);
 
   const addLog = (direction: LogDirection, payload: unknown) => {
     setLogs((prev) => [
@@ -103,6 +104,9 @@ const App = () => {
       audio.srcObject = null;
     }
 
+    stopSpeechRecognition();
+    resetCapture();
+
     if (isTalking) {
       addLog('from-gpt', { event: 'voice-session-stopped' });
     }
@@ -123,6 +127,10 @@ const App = () => {
       window.localStorage.setItem(MODEL_STORAGE_KEY, model);
     }
   }, [model]);
+
+  useEffect(() => {
+    isTalkingRef.current = isTalking;
+  }, [isTalking]);
 
   const requestRealtimeSession = async (
     options: { reset?: boolean; showSpinner?: boolean } = {},
@@ -349,12 +357,6 @@ const App = () => {
     }
 
     let workingSegment = segment.trim();
-    const lower = workingSegment.toLowerCase();
-    const wakeIdx = lower.indexOf(WAKE_PHRASE);
-    if (wakeIdx !== -1) {
-      workingSegment = workingSegment.slice(wakeIdx + WAKE_PHRASE.length).trim();
-    }
-
     if (!workingSegment) {
       return;
     }
@@ -380,7 +382,7 @@ const App = () => {
     }
   };
 
-  const handleUserUtterance = (utterance: string) => {
+  const handleRecognizedText = (utterance: string) => {
     const text = utterance.trim();
     if (!text) {
       return;
@@ -412,92 +414,91 @@ const App = () => {
     }
 
     if (captureStateRef.current === 'awaiting') {
-      let segment = text;
-      if (previous) {
-        const previousLower = previous.toLowerCase();
-        const currentLower = text.toLowerCase();
-        if (currentLower.startsWith(previousLower) && text.length >= previous.length) {
-          segment = text.slice(previous.length);
-        }
-      }
-      processCaptureSegment(segment || text);
+      processCaptureSegment(text);
     }
   };
 
-  const extractTextSegments = (value: unknown): string[] => {
-    const segments: string[] = [];
+  const stopSpeechRecognition = () => {
+    if (speechRestartTimeoutRef.current !== null) {
+      window.clearTimeout(speechRestartTimeoutRef.current);
+      speechRestartTimeoutRef.current = null;
+    }
 
-    const visit = (node: unknown) => {
-      if (node == null) {
-        return;
-      }
-      if (typeof node === 'string') {
-        const trimmed = node.trim();
-        if (trimmed) {
-          segments.push(trimmed);
+    const recognition = speechRecognitionRef.current;
+    if (!recognition) {
+      return;
+    }
+
+    try {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.stop();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      addLog('from-gpt', { event: 'speech-recognition-stop-error', error: message });
+    } finally {
+      speechRecognitionRef.current = null;
+    }
+  };
+
+  const startSpeechRecognition = () => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (speechRecognitionRef.current) {
+      return;
+    }
+
+    const SpeechRecognitionCtor =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      addLog('from-gpt', { event: 'speech-recognition-unavailable' });
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        if (!result?.isFinal) {
+          continue;
         }
-        return;
-      }
-      if (Array.isArray(node)) {
-        node.forEach(visit);
-        return;
-      }
-      if (typeof node === 'object') {
-        const record = node as Record<string, unknown>;
-
-        for (const [key, val] of Object.entries(record)) {
-          if (TEXT_KEYS.has(key) && typeof val === 'string') {
-            const trimmed = val.trim();
-            if (trimmed) {
-              segments.push(trimmed);
-            }
-            continue;
-          }
-
-          if (key === 'instructions') {
-            continue;
-          }
-
-          visit(val);
+        const transcript = result[0]?.transcript ?? '';
+        if (transcript && transcript.trim()) {
+          addLog('from-gpt', { event: 'speech-recognition-result', transcript });
+          handleRecognizedText(transcript);
         }
       }
     };
 
-    visit(value);
-    return segments;
-  };
+    recognition.onerror = (event: any) => {
+      const message = event?.error ?? event?.message ?? 'unknown error';
+      addLog('from-gpt', { event: 'speech-recognition-error', error: message });
+    };
 
-  const handleRealtimeEvent = (payload: unknown) => {
-    if (payload && typeof payload === 'object') {
-      const record = payload as Record<string, unknown>;
-      const type = typeof record.type === 'string' ? record.type : '';
-
-      if (type === 'conversation.item.completed' || type === 'conversation.item.created') {
-        const item = record.item as Record<string, unknown> | undefined;
-        const role = typeof item?.role === 'string' ? item.role : '';
-        if (role === 'user') {
-          const segments = extractTextSegments(item);
-          const combined = segments.join(' ').trim();
-          if (combined) {
-            handleUserUtterance(combined);
-            return;
-          }
-        }
+    recognition.onend = () => {
+      speechRecognitionRef.current = null;
+      if (isTalkingRef.current) {
+        speechRestartTimeoutRef.current = window.setTimeout(() => {
+          speechRestartTimeoutRef.current = null;
+          startSpeechRecognition();
+        }, 300);
       }
+    };
 
-      if (type === 'response.delta') {
-        const delta = record.delta as Record<string, unknown> | undefined;
-        const deltaType = typeof delta?.type === 'string' ? delta.type : '';
-        const deltaRole = typeof delta?.role === 'string' ? delta.role : '';
-        if (deltaRole === 'user' || deltaType.startsWith('input_text')) {
-          const segments = extractTextSegments(delta);
-          const combined = segments.join(' ').trim();
-          if (combined) {
-            handleUserUtterance(combined);
-            return;
-          }
-        }
-      }
+    try {
+      recognition.start();
+      speechRecognitionRef.current = recognition;
+      addLog('to-gpt', { event: 'speech-recognition-start' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      addLog('from-gpt', { event: 'speech-recognition-start-error', error: message });
     }
   };
 
@@ -566,13 +567,13 @@ const App = () => {
           }
         }
         addLog('from-gpt', { event: 'data-message', payload: parsed });
-        handleRealtimeEvent(parsed);
       };
 
       const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = localStream;
       localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
       pc.addTransceiver('audio', { direction: 'sendrecv' });
+      startSpeechRecognition();
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
