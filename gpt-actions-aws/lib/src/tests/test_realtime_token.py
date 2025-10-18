@@ -169,7 +169,7 @@ def test_http_error_logs_and_returns_502(monkeypatch):
         500,
         "error",
         hdrs=None,
-        fp=BytesIO(b"{""details"":""boom""}"),
+        fp=BytesIO(b"{\"details\":\"boom\"}"),
     )
     urlopen_mock = Mock(side_effect=http_error)
     monkeypatch.setattr(module.request, "urlopen", urlopen_mock)
