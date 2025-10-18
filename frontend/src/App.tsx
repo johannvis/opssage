@@ -24,6 +24,9 @@ const resolveToken = (payload: RealtimeSession | null) =>
   payload?.client_secret?.value ?? payload?.client_secret?.token ?? '';
 
 const MODEL_STORAGE_KEY = 'opssage:model-override';
+const WAKE_PHRASE = 'hey model test';
+const COMPLETE_KEYWORD = 'complete';
+const TEXT_KEYS = new Set(['text', 'transcript', 'caption']);
 
 const initialModelValue = () => {
   if (typeof window !== 'undefined') {
@@ -51,6 +54,9 @@ const App = () => {
   const localStreamRef = useRef<MediaStream | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const captureStateRef = useRef<'idle' | 'awaiting'>('idle');
+  const captureBufferRef = useRef('');
+  const lastUserUtteranceRef = useRef<string | null>(null);
 
   const addLog = (direction: LogDirection, payload: unknown) => {
     setLogs((prev) => [
@@ -242,6 +248,259 @@ const App = () => {
     );
   }, [session]);
 
+  const resetCapture = () => {
+    captureStateRef.current = 'idle';
+    captureBufferRef.current = '';
+    lastUserUtteranceRef.current = null;
+  };
+
+  const sendRealtimeInstruction = (text: string) => {
+    const dc = dataChannelRef.current;
+    const payload = {
+      type: 'response.create',
+      response: {
+        modalities: ['audio', 'text'],
+        instructions: text,
+      },
+    };
+
+    if (dc && dc.readyState === 'open') {
+      dc.send(JSON.stringify(payload));
+      addLog('to-gpt', { event: 'instruction', payload });
+    } else {
+      addLog('to-gpt', { event: 'instruction-buffered', payload });
+    }
+  };
+
+  const submitPingRequest = async (testText: string) => {
+    if (!config.apiBaseUrl) {
+      addLog('from-aws', { error: 'API base URL is not configured.' });
+      sendRealtimeInstruction('Unable to reach the ping API right now.');
+      return;
+    }
+
+    if (!bearer) {
+      addLog('from-aws', { error: 'Bearer token is required for ping requests.' });
+      sendRealtimeInstruction('Add your bearer token before running the test.');
+      return;
+    }
+
+    const url = `${config.apiBaseUrl}/secure/ping`;
+    addLog('to-aws', {
+      url,
+      method: 'POST',
+      headers: { Authorization: 'Bearer ***redacted***', 'Content-Type': 'application/json' },
+      body: { number: testText },
+    });
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${bearer}`,
+        },
+        body: JSON.stringify({ number: testText }),
+      });
+
+      const raw = await response.text();
+      let parsed: unknown = raw;
+      try {
+        parsed = raw ? JSON.parse(raw) : {};
+      } catch (_err) {
+        parsed = raw;
+      }
+
+      addLog('from-aws', {
+        status: response.status,
+        body: parsed,
+      });
+
+      if (!response.ok) {
+        sendRealtimeInstruction(`Ping request failed with status ${response.status}.`);
+        return;
+      }
+
+      const message =
+        typeof parsed === 'object' && parsed !== null && 'message' in parsed
+          ? String((parsed as Record<string, unknown>).message)
+          : 'Ping succeeded.';
+      sendRealtimeInstruction(`Ping response: ${message}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      addLog('from-aws', { error: message });
+      sendRealtimeInstruction(`Ping request failed: ${message}`);
+    }
+  };
+
+  const appendToCaptureBuffer = (segment: string) => {
+    const trimmed = segment.trim();
+    if (!trimmed) {
+      return;
+    }
+    captureBufferRef.current = captureBufferRef.current
+      ? `${captureBufferRef.current} ${trimmed}`.trim()
+      : trimmed;
+  };
+
+  const processCaptureSegment = (segment: string) => {
+    if (!segment) {
+      return;
+    }
+
+    let workingSegment = segment.trim();
+    const lower = workingSegment.toLowerCase();
+    const wakeIdx = lower.indexOf(WAKE_PHRASE);
+    if (wakeIdx !== -1) {
+      workingSegment = workingSegment.slice(wakeIdx + WAKE_PHRASE.length).trim();
+    }
+
+    if (!workingSegment) {
+      return;
+    }
+
+    const lowerWorking = workingSegment.toLowerCase();
+    const completeIdx = lowerWorking.indexOf(COMPLETE_KEYWORD);
+    let hasComplete = false;
+    if (completeIdx !== -1) {
+      workingSegment = workingSegment.slice(0, completeIdx);
+      hasComplete = true;
+    }
+
+    appendToCaptureBuffer(workingSegment);
+
+    if (hasComplete) {
+      const submission = captureBufferRef.current.trim();
+      resetCapture();
+      if (submission) {
+        void submitPingRequest(submission);
+      } else {
+        sendRealtimeInstruction("I didn't catch your test. Please try again.");
+      }
+    }
+  };
+
+  const handleUserUtterance = (utterance: string) => {
+    const text = utterance.trim();
+    if (!text) {
+      return;
+    }
+
+    const previous = lastUserUtteranceRef.current;
+    if (previous === text) {
+      return;
+    }
+    lastUserUtteranceRef.current = text;
+
+    const lower = text.toLowerCase();
+
+    if (captureStateRef.current === 'idle') {
+      const wakeIdx = lower.indexOf(WAKE_PHRASE);
+      if (wakeIdx !== -1) {
+        addLog('from-gpt', { event: 'wake-phrase-detected', text });
+        captureStateRef.current = 'awaiting';
+        captureBufferRef.current = '';
+        sendRealtimeInstruction('whats your test');
+
+        const remainder = text.slice(wakeIdx + WAKE_PHRASE.length);
+        if (remainder.trim()) {
+          processCaptureSegment(remainder);
+        }
+        return;
+      }
+      return;
+    }
+
+    if (captureStateRef.current === 'awaiting') {
+      let segment = text;
+      if (previous) {
+        const previousLower = previous.toLowerCase();
+        const currentLower = text.toLowerCase();
+        if (currentLower.startsWith(previousLower) && text.length >= previous.length) {
+          segment = text.slice(previous.length);
+        }
+      }
+      processCaptureSegment(segment || text);
+    }
+  };
+
+  const extractTextSegments = (value: unknown): string[] => {
+    const segments: string[] = [];
+
+    const visit = (node: unknown) => {
+      if (node == null) {
+        return;
+      }
+      if (typeof node === 'string') {
+        const trimmed = node.trim();
+        if (trimmed) {
+          segments.push(trimmed);
+        }
+        return;
+      }
+      if (Array.isArray(node)) {
+        node.forEach(visit);
+        return;
+      }
+      if (typeof node === 'object') {
+        const record = node as Record<string, unknown>;
+
+        for (const [key, val] of Object.entries(record)) {
+          if (TEXT_KEYS.has(key) && typeof val === 'string') {
+            const trimmed = val.trim();
+            if (trimmed) {
+              segments.push(trimmed);
+            }
+            continue;
+          }
+
+          if (key === 'instructions') {
+            continue;
+          }
+
+          visit(val);
+        }
+      }
+    };
+
+    visit(value);
+    return segments;
+  };
+
+  const handleRealtimeEvent = (payload: unknown) => {
+    if (payload && typeof payload === 'object') {
+      const record = payload as Record<string, unknown>;
+      const type = typeof record.type === 'string' ? record.type : '';
+
+      if (type === 'conversation.item.completed' || type === 'conversation.item.created') {
+        const item = record.item as Record<string, unknown> | undefined;
+        const role = typeof item?.role === 'string' ? item.role : '';
+        if (role === 'user') {
+          const segments = extractTextSegments(item);
+          const combined = segments.join(' ').trim();
+          if (combined) {
+            handleUserUtterance(combined);
+            return;
+          }
+        }
+      }
+
+      if (type === 'response.delta') {
+        const delta = record.delta as Record<string, unknown> | undefined;
+        const deltaType = typeof delta?.type === 'string' ? delta.type : '';
+        const deltaRole = typeof delta?.role === 'string' ? delta.role : '';
+        if (deltaRole === 'user' || deltaType.startsWith('input_text')) {
+          const segments = extractTextSegments(delta);
+          const combined = segments.join(' ').trim();
+          if (combined) {
+            handleUserUtterance(combined);
+            return;
+          }
+        }
+      }
+    }
+  };
+
   const startVoiceSession = async (token: string) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setError('Browser does not support audio capture.');
@@ -307,6 +566,7 @@ const App = () => {
           }
         }
         addLog('from-gpt', { event: 'data-message', payload: parsed });
+        handleRealtimeEvent(parsed);
       };
 
       const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
