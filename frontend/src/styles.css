@@ -279,7 +279,7 @@ button.secondary:not(:disabled):hover {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   margin-bottom: 0.75rem;
-  color: #94a3b8;
+  color: inherit;
 }
 
 .log-entry pre {
@@ -289,19 +289,31 @@ button.secondary:not(:disabled):hover {
 }
 
 .log-entry.to-aws {
-  background: rgba(14, 165, 233, 0.08);
+  background: rgba(14, 165, 233, 0.12);
 }
 
 .log-entry.from-aws {
-  background: rgba(74, 222, 128, 0.08);
+  background: rgba(74, 222, 128, 0.12);
+  color: #eab308;
+}
+
+.log-entry.from-aws .log-direction,
+.log-entry.from-aws time {
+  color: #facc15;
 }
 
 .log-entry.to-gpt {
-  background: rgba(168, 85, 247, 0.08);
+  background: rgba(168, 85, 247, 0.12);
 }
 
 .log-entry.from-gpt {
-  background: rgba(249, 115, 22, 0.08);
+  background: rgba(249, 115, 22, 0.12);
+  color: #22c55e;
+}
+
+.log-entry.from-gpt .log-direction,
+.log-entry.from-gpt time {
+  color: #22c55e;
 }
 
 footer {

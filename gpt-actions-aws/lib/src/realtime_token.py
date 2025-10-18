@@ -134,6 +134,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     voice = body.get("voice")
     expires_in = body.get("expires_in")
     requested_model = body.get("model")
+    transcription_config = body.get("input_audio_transcription")
 
     if expires_in is not None:
         try:
@@ -167,6 +168,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         session_payload["voice"] = voice
     if expires_in is not None:
         session_payload["expires_in"] = expires_in
+    if transcription_config:
+        session_payload["input_audio_transcription"] = transcription_config
 
     request_id = getattr(context, "aws_request_id", "")
 

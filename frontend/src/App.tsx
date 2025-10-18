@@ -24,8 +24,26 @@ const resolveToken = (payload: RealtimeSession | null) =>
   payload?.client_secret?.value ?? payload?.client_secret?.token ?? '';
 
 const MODEL_STORAGE_KEY = 'opssage:model-override';
+const TRANSCRIPTION_ENABLED_KEY = 'opssage:transcription-enabled';
+const TRANSCRIPTION_MODEL_KEY = 'opssage:transcription-model';
 const WAKE_PHRASE = 'hey model test';
 const COMPLETE_KEYWORD = 'complete';
+const TEXT_KEYS = new Set(['text', 'transcript', 'caption']);
+const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe';
+const TRANSCRIPTION_PROMPT =
+  [
+    'Transcribe exactly what the user said between the most recent "hey model test" wake phrase and the moment they said "complete".',
+    'Return a single JSON object of the form {"transcript":"<text>"}.',
+    'Do not include any additional commentary and do not output audio.',
+  ].join(' ');
+const BASE_INSTRUCTIONS =
+  [
+    'Remain silent when the session begins. Do not greet the user or prompt them unless explicitly instructed by the client application.',
+    'Only respond when the client sends you a `response.create` message. Treat any automatic turn-detection events as noise and do not initiate your own replies.',
+    'When the user says "hey model test", respond once with the exact phrase "whats your test. Please say \"complete\" when you are finished speaking." and then stay silent.',
+    'After answering the wake phrase, ignore all other user speech until the client sends you further instructions. The client will issue follow-up `response.create` messages after the user says "complete".',
+    'Never improvise additional prompts such as "Please continue" or "Complete.". Only speak the explicit instructions provided by the client.',
+  ].join(' ');
 const initialModelValue = () => {
   if (typeof window !== 'undefined') {
     const stored = window.localStorage.getItem(MODEL_STORAGE_KEY);
@@ -34,6 +52,23 @@ const initialModelValue = () => {
     }
   }
   return defaultRealtimeModel;
+};
+
+const initialTranscriptionEnabled = () => {
+  if (typeof window !== 'undefined') {
+    return window.localStorage.getItem(TRANSCRIPTION_ENABLED_KEY) === 'true';
+  }
+  return false;
+};
+
+const initialTranscriptionModel = () => {
+  if (typeof window !== 'undefined') {
+    const stored = window.localStorage.getItem(TRANSCRIPTION_MODEL_KEY);
+    if (stored && stored.trim()) {
+      return stored.trim();
+    }
+  }
+  return DEFAULT_TRANSCRIPTION_MODEL;
 };
 
 const App = () => {
@@ -47,17 +82,24 @@ const App = () => {
   const [isTalking, setIsTalking] = useState(false);
   const [talkBusy, setTalkBusy] = useState(false);
   const [model, setModel] = useState(initialModelValue);
+  const [enableTranscription, setEnableTranscription] = useState(initialTranscriptionEnabled);
+  const [transcriptionModel, setTranscriptionModel] = useState(initialTranscriptionModel);
 
   const connectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const captureStateRef = useRef<'idle' | 'awaiting'>('idle');
-  const captureBufferRef = useRef('');
-  const lastUserUtteranceRef = useRef<string | null>(null);
-  const speechRecognitionRef = useRef<any>(null);
-  const speechRestartTimeoutRef = useRef<number | null>(null);
-  const isTalkingRef = useRef(false);
+const captureStateRef = useRef<'idle' | 'awaiting' | 'awaiting_transcription'>('idle');
+const captureBufferRef = useRef('');
+const lastUserUtteranceRef = useRef<string | null>(null);
+const originalTurnDetectionRef = useRef<Record<string, unknown> | null>(null);
+const turnDetectionDisabledRef = useRef(false);
+const pendingSessionUpdatesRef = useRef<any[]>([]);
+const currentResponseIdRef = useRef<string | null>(null);
+const allowNextResponseRef = useRef(false);
+const transcriptionResponseIdRef = useRef<string | null>(null);
+const transcriptionBufferRef = useRef('');
+const pendingCapturedTextRef = useRef('');
 
   const addLog = (direction: LogDirection, payload: unknown) => {
     setLogs((prev) => [
@@ -105,6 +147,46 @@ const App = () => {
     URL.revokeObjectURL(url);
   };
 
+  const extractTextValues = (value: unknown): string[] => {
+    const segments: string[] = [];
+
+    const visit = (node: unknown) => {
+      if (node == null) {
+        return;
+      }
+      if (typeof node === 'string') {
+        const trimmed = node.trim();
+        if (trimmed) {
+          segments.push(trimmed);
+        }
+        return;
+      }
+      if (typeof node === 'object') {
+        if (Array.isArray(node)) {
+          node.forEach(visit);
+          return;
+        }
+        const record = node as Record<string, unknown>;
+        for (const [key, val] of Object.entries(record)) {
+          if (TEXT_KEYS.has(key) && typeof val === 'string') {
+            const trimmed = val.trim();
+            if (trimmed) {
+              segments.push(trimmed);
+            }
+            continue;
+          }
+          if (key === 'instructions') {
+            continue;
+          }
+          visit(val);
+        }
+      }
+    };
+
+    visit(value);
+    return segments;
+  };
+
   const stopVoiceSession = () => {
     const pc = connectionRef.current;
     if (pc) {
@@ -132,13 +214,15 @@ const App = () => {
       }
       dataChannelRef.current = null;
     }
+    while (pendingSessionUpdatesRef.current.length) {
+      pendingSessionUpdatesRef.current.shift();
+    }
 
     const audio = audioRef.current;
     if (audio) {
       audio.srcObject = null;
     }
 
-    stopSpeechRecognition();
     resetCapture();
 
     if (isTalking) {
@@ -163,8 +247,19 @@ const App = () => {
   }, [model]);
 
   useEffect(() => {
-    isTalkingRef.current = isTalking;
-  }, [isTalking]);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        TRANSCRIPTION_ENABLED_KEY,
+        enableTranscription ? 'true' : 'false',
+      );
+    }
+  }, [enableTranscription]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(TRANSCRIPTION_MODEL_KEY, transcriptionModel);
+    }
+  }, [transcriptionModel]);
 
   const requestRealtimeSession = async (
     options: { reset?: boolean; showSpinner?: boolean } = {},
@@ -192,11 +287,22 @@ const App = () => {
     const url = `${config.apiBaseUrl}/secure/realtime-token`;
     const activeModel = model.trim() || config.realtimeModel;
 
+    const transcriptionModelName = transcriptionModel.trim() || DEFAULT_TRANSCRIPTION_MODEL;
+
+    const requestBody: Record<string, unknown> = {
+      model: activeModel,
+      instructions: BASE_INSTRUCTIONS,
+    };
+
+    if (enableTranscription) {
+      requestBody.input_audio_transcription = { model: transcriptionModelName };
+    }
+
     addLog('to-aws', {
       url,
       method: 'POST',
       headers: { Authorization: 'Bearer ***redacted***' },
-      body: { model: activeModel },
+      body: requestBody,
     });
 
     try {
@@ -206,7 +312,7 @@ const App = () => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${bearer}`,
         },
-        body: JSON.stringify({ model: activeModel }),
+        body: JSON.stringify(requestBody),
       });
 
       const text = await response.text();
@@ -233,6 +339,13 @@ const App = () => {
 
       const sessionPayload = (parsed as { session?: RealtimeSession }).session ?? null;
       setSession(sessionPayload);
+      if (sessionPayload?.turn_detection && !originalTurnDetectionRef.current) {
+        try {
+          originalTurnDetectionRef.current = JSON.parse(JSON.stringify(sessionPayload.turn_detection));
+        } catch (err) {
+          originalTurnDetectionRef.current = sessionPayload.turn_detection as Record<string, unknown>;
+        }
+      }
       if (sessionPayload) {
         addLog('to-gpt', {
           hint: 'Use this session to open a WebRTC connection with OpenAI.',
@@ -269,11 +382,17 @@ const App = () => {
 
     const secret = resolveToken(session);
     const activeModel = model.trim() || config.realtimeModel;
+    const sessionTranscription = (session?.input_audio_transcription as { model?: string } | undefined)?.model;
+    const transcriptionModelName = transcriptionModel.trim() || DEFAULT_TRANSCRIPTION_MODEL;
+    const transcriptionLabel = sessionTranscription ?? (enableTranscription ? transcriptionModelName : 'disabled');
     return (
       <div className="session-preview">
         <h2>Realtime Session</h2>
         <p className="session-info">
           Model: <code>{session?.model ?? activeModel}</code>
+        </p>
+        <p className="session-info">
+          Transcription: <code>{transcriptionLabel}</code>
         </p>
         {secret ? (
           <div className="session-token">
@@ -288,15 +407,20 @@ const App = () => {
         <pre className="session-json">{JSON.stringify(session, null, 2)}</pre>
       </div>
     );
-  }, [session]);
+  }, [session, model, enableTranscription, transcriptionModel]);
 
-  const resetCapture = () => {
-    captureStateRef.current = 'idle';
-    captureBufferRef.current = '';
-    lastUserUtteranceRef.current = null;
-  };
+const resetCapture = () => {
+  captureStateRef.current = 'idle';
+  captureBufferRef.current = '';
+  lastUserUtteranceRef.current = null;
+  restoreAutoResponses();
+  pendingCapturedTextRef.current = '';
+  transcriptionResponseIdRef.current = null;
+  transcriptionBufferRef.current = '';
+  allowNextResponseRef.current = false;
+};
 
-  const sendRealtimeInstruction = (text: string) => {
+const sendRealtimeInstruction = (text: string) => {
     const dc = dataChannelRef.current;
     const payload = {
       type: 'response.create',
@@ -306,6 +430,7 @@ const App = () => {
       },
     };
 
+    allowNextResponseRef.current = true;
     if (dc && dc.readyState === 'open') {
       dc.send(JSON.stringify(payload));
       addLog('to-gpt', { event: 'instruction', payload });
@@ -313,6 +438,120 @@ const App = () => {
       addLog('to-gpt', { event: 'instruction-buffered', payload });
     }
   };
+
+  const requestTranscriptionFromModel = (capturedText: string) => {
+    if (!enableTranscription) {
+      void (async () => {
+        await submitPingRequest(capturedText);
+        resetCapture();
+      })();
+      return;
+    }
+
+    const dc = dataChannelRef.current;
+    const payload = {
+      type: 'response.create',
+      response: {
+        modalities: ['text'],
+        instructions: TRANSCRIPTION_PROMPT,
+      },
+    };
+
+    if (!dc || dc.readyState !== 'open') {
+      addLog('to-gpt', { event: 'transcription-request-skipped', reason: 'data-channel not ready' });
+      allowNextResponseRef.current = false;
+      void (async () => {
+        await submitPingRequest(capturedText);
+        resetCapture();
+      })();
+      return;
+    }
+
+    allowNextResponseRef.current = true;
+    transcriptionBufferRef.current = '';
+    transcriptionResponseIdRef.current = null;
+    dc.send(JSON.stringify(payload));
+    addLog('to-gpt', { event: 'transcription-request', payload });
+  };
+
+  const sendSessionUpdate = (sessionPatch: Record<string, unknown>) => {
+    const dc = dataChannelRef.current;
+    const payload = {
+      type: 'session.update',
+      session: sessionPatch,
+    };
+
+    if (dc && dc.readyState === 'open') {
+      dc.send(JSON.stringify(payload));
+      addLog('to-gpt', { event: 'session-update', payload });
+    } else {
+      pendingSessionUpdatesRef.current.push(payload);
+      addLog('to-gpt', { event: 'session-update-buffered', payload });
+    }
+  };
+
+  const sendCancelActiveResponse = (responseId?: string | null) => {
+    const dc = dataChannelRef.current;
+    if (!dc || dc.readyState !== 'open') {
+      return;
+    }
+
+    const targetId = responseId ?? currentResponseIdRef.current;
+    if (!targetId) {
+      return;
+    }
+
+    const payload = { type: 'response.cancel', response_id: targetId };
+    dc.send(JSON.stringify(payload));
+    addLog('to-gpt', { event: 'response-cancel', payload });
+    if (currentResponseIdRef.current === targetId) {
+      currentResponseIdRef.current = null;
+    }
+  };
+
+const disableAutoResponses = () => {
+  if (turnDetectionDisabledRef.current) {
+    return;
+  }
+
+    sendSessionUpdate({
+      turn_detection: {
+        type: 'server_vad',
+        threshold: 0.5,
+        prefix_padding_ms: 300,
+        silence_duration_ms: 200,
+        idle_timeout_ms: null,
+        create_response: false,
+        interrupt_response: false,
+      },
+    });
+  turnDetectionDisabledRef.current = true;
+};
+
+  const restoreAutoResponses = () => {
+    if (!turnDetectionDisabledRef.current) {
+      return;
+    }
+
+    const original = originalTurnDetectionRef.current;
+    if (original) {
+      sendSessionUpdate({ turn_detection: original });
+    } else {
+      sendSessionUpdate({
+        turn_detection: {
+          type: 'server_vad',
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 200,
+          idle_timeout_ms: null,
+          create_response: true,
+          interrupt_response: true,
+        },
+      });
+    }
+    turnDetectionDisabledRef.current = false;
+  };
+
 
   const submitPingRequest = async (testText: string) => {
     if (!config.apiBaseUrl) {
@@ -407,12 +646,25 @@ const App = () => {
 
     if (hasComplete) {
       const submission = captureBufferRef.current.trim();
-      resetCapture();
-      if (submission) {
-        void submitPingRequest(submission);
-      } else {
+      captureBufferRef.current = '';
+
+      if (!submission) {
+        resetCapture();
         sendRealtimeInstruction("I didn't catch your test. Please try again.");
+        return;
       }
+
+      if (!enableTranscription) {
+        void (async () => {
+          await submitPingRequest(submission);
+          resetCapture();
+        })();
+        return;
+      }
+
+      pendingCapturedTextRef.current = submission;
+      captureStateRef.current = 'awaiting_transcription';
+      requestTranscriptionFromModel(submission);
     }
   };
 
@@ -434,9 +686,11 @@ const App = () => {
       const wakeIdx = lower.indexOf(WAKE_PHRASE);
       if (wakeIdx !== -1) {
         addLog('from-gpt', { event: 'wake-phrase-detected', text });
+        disableAutoResponses();
+        sendCancelActiveResponse();
         captureStateRef.current = 'awaiting';
         captureBufferRef.current = '';
-        sendRealtimeInstruction('whats your test');
+        sendRealtimeInstruction('whats your test. Please say "complete" when you are finished speaking.');
 
         const remainder = text.slice(wakeIdx + WAKE_PHRASE.length);
         if (remainder.trim()) {
@@ -449,90 +703,143 @@ const App = () => {
 
     if (captureStateRef.current === 'awaiting') {
       processCaptureSegment(text);
+      return;
+    }
+
+    if (captureStateRef.current === 'awaiting_transcription') {
+      return;
     }
   };
 
-  const stopSpeechRecognition = () => {
-    if (speechRestartTimeoutRef.current !== null) {
-      window.clearTimeout(speechRestartTimeoutRef.current);
-      speechRestartTimeoutRef.current = null;
-    }
-
-    const recognition = speechRecognitionRef.current;
-    if (!recognition) {
+  const handleRealtimeEvent = (payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
       return;
     }
 
-    try {
-      recognition.onresult = null;
-      recognition.onerror = null;
-      recognition.onend = null;
-      recognition.stop();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      addLog('from-gpt', { event: 'speech-recognition-stop-error', error: message });
-    } finally {
-      speechRecognitionRef.current = null;
-    }
-  };
+    const record = payload as Record<string, unknown>;
+    const type = typeof record.type === 'string' ? record.type : '';
 
-  const startSpeechRecognition = () => {
-    if (typeof window === 'undefined') {
+    if (type === 'session.created') {
+      disableAutoResponses();
       return;
     }
 
-    if (speechRecognitionRef.current) {
-      return;
-    }
-
-    const SpeechRecognitionCtor =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionCtor) {
-      addLog('from-gpt', { event: 'speech-recognition-unavailable' });
-      return;
-    }
-
-    const recognition = new SpeechRecognitionCtor();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (event: any) => {
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const result = event.results[i];
-        if (!result?.isFinal) {
-          continue;
-        }
-        const transcript = result[0]?.transcript ?? '';
-        if (transcript && transcript.trim()) {
-          addLog('from-gpt', { event: 'speech-recognition-result', transcript });
-          handleRecognizedText(transcript);
-        }
+    if (type === 'response.created') {
+      const response = record.response as Record<string, unknown> | undefined;
+      const responseId = typeof response?.id === 'string' ? response.id : null;
+      if (responseId) {
+        currentResponseIdRef.current = responseId;
       }
-    };
 
-    recognition.onerror = (event: any) => {
-      const message = event?.error ?? event?.message ?? 'unknown error';
-      addLog('from-gpt', { event: 'speech-recognition-error', error: message });
-    };
-
-    recognition.onend = () => {
-      speechRecognitionRef.current = null;
-      if (isTalkingRef.current) {
-        speechRestartTimeoutRef.current = window.setTimeout(() => {
-          speechRestartTimeoutRef.current = null;
-          startSpeechRecognition();
-        }, 300);
+      if (allowNextResponseRef.current && captureStateRef.current === 'awaiting_transcription' && responseId) {
+        allowNextResponseRef.current = false;
+        transcriptionResponseIdRef.current = responseId;
+        transcriptionBufferRef.current = '';
+        return;
       }
-    };
 
-    try {
-      recognition.start();
-      speechRecognitionRef.current = recognition;
-      addLog('to-gpt', { event: 'speech-recognition-start' });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      addLog('from-gpt', { event: 'speech-recognition-start-error', error: message });
+      if (allowNextResponseRef.current) {
+        allowNextResponseRef.current = false;
+        return;
+      }
+
+      if (captureStateRef.current === 'awaiting' && responseId) {
+        sendCancelActiveResponse(responseId);
+        return;
+      }
+    }
+
+    if (
+      (type === 'response.audio_transcript.delta' || type === 'response.audio_transcript.done') &&
+      (captureStateRef.current === 'awaiting' || captureStateRef.current === 'awaiting_transcription')
+    ) {
+      const transcript =
+        typeof record.delta === 'string'
+          ? record.delta
+          : typeof record.transcript === 'string'
+            ? record.transcript
+            : '';
+      if (transcript.trim().toLowerCase() === 'complete') {
+        sendCancelActiveResponse(typeof record.response_id === 'string' ? record.response_id : null);
+        resetCapture();
+        return;
+      }
+    }
+
+    if (type === 'response.output_text.delta') {
+      if (!enableTranscription) {
+        return;
+      }
+      const responseId = typeof record.response_id === 'string' ? record.response_id : null;
+      if (responseId && transcriptionResponseIdRef.current === responseId) {
+        const delta = typeof record.delta === 'string' ? record.delta : '';
+        transcriptionBufferRef.current += delta;
+      }
+      return;
+    }
+
+    if (type === 'response.output_text.done') {
+      if (!enableTranscription) {
+        return;
+      }
+      const responseId = typeof record.response_id === 'string' ? record.response_id : null;
+      if (responseId && transcriptionResponseIdRef.current === responseId) {
+        const raw = transcriptionBufferRef.current.trim();
+        let transcriptText = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed === 'string') {
+            transcriptText = parsed;
+          } else if (parsed && typeof parsed.transcript === 'string') {
+            transcriptText = parsed.transcript;
+          }
+        } catch (err) {
+          // leave as raw
+        }
+
+        const finalTranscript = transcriptText || pendingCapturedTextRef.current;
+        if (!finalTranscript) {
+          sendRealtimeInstruction('Could not capture any text from the user.');
+          resetCapture();
+          return;
+        }
+
+        void (async () => {
+          await submitPingRequest(finalTranscript);
+          resetCapture();
+        })();
+        return;
+      }
+    }
+
+    if (type === 'response.done') {
+      const response = record.response as Record<string, unknown> | undefined;
+      const responseId = typeof response?.id === 'string' ? response.id : null;
+      if (responseId && currentResponseIdRef.current === responseId) {
+        currentResponseIdRef.current = null;
+      }
+    }
+
+    if (type === 'conversation.item.input_audio_transcription.completed') {
+      const transcript = typeof record.transcript === 'string' ? record.transcript : '';
+      if (transcript) {
+        handleRecognizedText(transcript);
+      } else {
+        const item = record.item as Record<string, unknown> | undefined;
+        const segments = extractTextValues(item);
+        segments.forEach(handleRecognizedText);
+      }
+      return;
+    }
+
+    if (type === 'response.delta') {
+      const delta = record.delta as Record<string, unknown> | undefined;
+      const deltaRole = typeof delta?.role === 'string' ? delta.role : '';
+      const deltaType = typeof delta?.type === 'string' ? delta.type : '';
+      if (deltaRole === 'user' || deltaType.startsWith('input_text')) {
+        const segments = extractTextValues(delta);
+        segments.forEach(handleRecognizedText);
+      }
     }
   };
 
@@ -579,16 +886,22 @@ const App = () => {
       const dataChannel = pc.createDataChannel('oai-events');
       dataChannelRef.current = dataChannel;
 
+      const flushPendingSessionUpdates = () => {
+        const dc = dataChannelRef.current;
+        while (pendingSessionUpdatesRef.current.length && dc && dc.readyState === 'open') {
+          const payload = pendingSessionUpdatesRef.current.shift();
+          if (!payload) {
+            continue;
+          }
+          dc.send(JSON.stringify(payload));
+          addLog('to-gpt', { event: 'session-update', payload });
+        }
+      };
+
       dataChannel.onopen = () => {
         addLog('to-gpt', { event: 'data-channel-open' });
-        const payload = {
-          type: 'response.create',
-          response: {
-            modalities: ['audio', 'text'],
-            instructions: 'Have a natural conversation with the user. Respond out loud.',
-          },
-        };
-        dataChannel.send(JSON.stringify(payload));
+        flushPendingSessionUpdates();
+        disableAutoResponses();
       };
 
       dataChannel.onmessage = (event) => {
@@ -601,13 +914,13 @@ const App = () => {
           }
         }
         addLog('from-gpt', { event: 'data-message', payload: parsed });
+        handleRealtimeEvent(parsed);
       };
 
       const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = localStream;
       localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
       pc.addTransceiver('audio', { direction: 'sendrecv' });
-      startSpeechRecognition();
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -759,6 +1072,34 @@ const App = () => {
           <small>
             Override the backend model (current default: <code>{defaultRealtimeModel}</code>). The value
             is stored locally for convenience.
+          </small>
+        </label>
+      </section>
+
+      <section className="controls transcription">
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={enableTranscription}
+            onChange={(event) => setEnableTranscription(event.target.checked)}
+          />
+          Enable text transcription capture
+        </label>
+        <label
+          htmlFor="transcription-model-input"
+          style={{ opacity: enableTranscription ? 1 : 0.5 }}
+        >
+          Transcription model
+          <input
+            id="transcription-model-input"
+            type="text"
+            placeholder={DEFAULT_TRANSCRIPTION_MODEL}
+            value={transcriptionModel}
+            onChange={(event) => setTranscriptionModel(event.target.value)}
+            disabled={!enableTranscription}
+          />
+          <small>
+            Used to request JSON transcripts from OpenAI when the workflow runs.
           </small>
         </label>
       </section>

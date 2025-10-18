@@ -214,3 +214,20 @@ def test_happy_path(monkeypatch):
     sent_body = json.loads(req_obj.data.decode("utf-8"))
     assert sent_body["model"] == module.DEFAULT_REALTIME_MODEL
     assert sent_body["modalities"] == ["audio", "text"]
+
+
+def test_transcription_config_forwarded(monkeypatch):
+    module, _ = _load_module(monkeypatch)
+    openai_payload = {"object": "realtime.session", "id": "sess"}
+    urlopen_mock = Mock(return_value=DummyResponse(openai_payload))
+    monkeypatch.setattr(module.request, "urlopen", urlopen_mock)
+
+    payload = {
+        "instructions": "test",
+        "input_audio_transcription": {"model": "gpt-4o-transcribe"},
+    }
+
+    resp = module.handler(_dummy_event("POST", payload), _context())
+    assert resp["statusCode"] == 200
+    sent_body = json.loads(urlopen_mock.call_args[0][0].data.decode("utf-8"))
+    assert sent_body["input_audio_transcription"] == payload["input_audio_transcription"]
