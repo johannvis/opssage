@@ -129,6 +129,27 @@ Use the **Realtime model** field to override the backend default (`gpt-4o-mini-r
 - The cleaned text is sent to `/secure/ping` via **GET** with `?number=<words>`. Check the debug panel for the `to aws`/`from aws` entries to confirm the round-trip succeeded.
 - When the Lambda responds, the assistant immediately repeats the message in English (e.g. `Ping response: you sent me Carrot Onion Potato`). If the request fails, the assistant announces `Ping request failed.` and the error is logged for troubleshooting.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User
+    participant Frontend
+    participant GPT as OpenAI Realtime
+    participant API as Opssage API (/secure/*)
+    participant Lambda as Ping Lambda
+
+    User->>Frontend: Say "hey model"/dictate values
+    Frontend->>GPT: WebRTC audio stream (session token)
+    GPT-->>Frontend: Audio prompt (e.g. "what do you want to test")
+    Frontend->>Frontend: Collect transcript (trim trigger/stop)
+    Frontend->>API: GET /secure/ping?number=<words>\nAuthorization: Bearer …
+    API->>Lambda: Invoke ping handler
+    Lambda-->>API: 200 {"message":"you sent me …"}
+    API-->>Frontend: 200 response
+    Frontend->>GPT: response.create (audio + text)\n"Ping response: you sent me …"
+    GPT-->>User: Speaks ping result (English only)
+```
+
 ### CI workflow
 
 The GitHub Actions workflow in `.github/workflows/frontend.yml` is available for manual runs (`workflow_dispatch`). Trigger it when you want CI to validate the build; otherwise only the CDK pipeline runs automatically.
