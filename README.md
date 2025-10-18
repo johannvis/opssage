@@ -13,6 +13,10 @@ The `cdk.json` file defines how the CDK Toolkit executes the app entry point.
 * `npx cdk diff`    compare the deployed stack with current state
 * `npx cdk synth`   emit the synthesised CloudFormation template
 
+### Documentation
+
+- [Unit Tests](docs/unit-tests.md)
+
 ## Bootstrapping
 
 The CDK toolkit needs a bootstrap stack in each account/region before this project can deploy. Run this once per environment (replace the region if required):
