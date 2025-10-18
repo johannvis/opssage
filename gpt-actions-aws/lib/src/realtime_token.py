@@ -20,6 +20,12 @@ LOGGER.setLevel(logging.INFO)
 _SECRETS_CLIENT: Any | None = None
 _SECRET_CACHE: Dict[str, str] = {}
 
+if boto3 is not None:
+    try:
+        _SECRETS_CLIENT = boto3.client("secretsmanager")
+    except ModuleNotFoundError:
+        _SECRETS_CLIENT = None
+
 OPENAI_SESSIONS_URL = "https://api.openai.com/v1/realtime/sessions"
 DEFAULT_REALTIME_MODEL = "gpt-4o-mini-realtime-preview"
 DEFAULT_TIMEOUT_SECONDS = 8
