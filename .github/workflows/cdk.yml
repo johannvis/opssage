@@ -69,6 +69,17 @@ jobs:
       - name: Build TypeScript
         run: npm run build
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python test dependencies
+        run: pip install pytest
+
+      - name: Run unit tests
+        run: pytest gpt-actions-aws/lib/src/tests
+
       - name: Synthesize CDK app
         run: npx cdk synth
 

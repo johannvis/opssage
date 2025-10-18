@@ -111,6 +111,7 @@ export class ProtoBearerStack extends Stack {
         SECRET_NAME: secretName,
         OPENAI_API_KEY_SECRET_ARN: openAiSecret.secretArn,
         REALTIME_MODEL: realtimeModel.valueAsString,
+        CORS_ALLOW_ORIGIN: process.env.CORS_ALLOW_ORIGIN ?? '*',
       },
       description: 'Mints short-lived OpenAI realtime session tokens for authorised clients',
       functionName: `${this.stackName}-realtime-token`,
@@ -136,6 +137,12 @@ export class ProtoBearerStack extends Stack {
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('RealtimeTokenIntegration', realtimeTokenFunction),
       authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/secure/realtime-token',
+      methods: [HttpMethod.OPTIONS],
+      integration: new HttpLambdaIntegration('RealtimeTokenOptionsIntegration', realtimeTokenFunction),
     });
 
     const stage = new CfnStage(this, 'OpssageDefaultStage', {

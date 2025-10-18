@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-LOGGER = logging.getLogger()
+LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
 
@@ -60,12 +60,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "msg": "ping",
                 "requestId": request_id,
                 "number": number,
-            }
+            },
+            separators=(",", ":"),
         )
     )
 
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(body),
+        "body": json.dumps(body, separators=(",", ":")),
     }
