@@ -121,6 +121,14 @@ The button stays disabled until a realtime session token has been minted via **E
 
 Use the **Realtime model** field to override the backend default (`gpt-4o-mini-realtime-preview`). The value you enter is stored locally and sent with each `/secure/realtime-token` request so you can test other realtime-preview model IDs or custom GPT deployments. To obtain a custom GPT’s model ID: open https://chat.openai.com/gpts, select **Edit GPT**, and in the builder click the ⋮ menu near Update/Share, then choose “View API details”. Copy the string that looks like `gpt://custom-gpt/dpl_…` and paste it into this field.
 
+#### Guided voice workflow
+
+- Say **“hey model”** (or **“hay model”**) to enter *Test Mode*. The client cancels any GPT speech, disables automatic responses, and plays a fixed prompt asking what you want to test.
+- Dictate your values (for example “Carrot … Onion … Potato …”). Finish with **“model stop”**; the app tolerates close variants such as “muddle stop”.
+- The transcript is normalised: the trigger/stop phrases are removed, whitespace is collapsed, and the remaining words are concatenated into a single string.
+- The cleaned text is sent to `/secure/ping` via **GET** with `?number=<words>`. Check the debug panel for the `to aws`/`from aws` entries to confirm the round-trip succeeded.
+- When the Lambda responds, the assistant immediately repeats the message in English (e.g. `Ping response: you sent me Carrot Onion Potato`). If the request fails, the assistant announces `Ping request failed.` and the error is logged for troubleshooting.
+
 ### CI workflow
 
 The GitHub Actions workflow in `.github/workflows/frontend.yml` is available for manual runs (`workflow_dispatch`). Trigger it when you want CI to validate the build; otherwise only the CDK pipeline runs automatically.

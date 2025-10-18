@@ -26,7 +26,6 @@ const resolveToken = (payload: RealtimeSession | null) =>
 const MODEL_STORAGE_KEY = 'opssage:model-override';
 const TRANSCRIPTION_ENABLED_KEY = 'opssage:transcription-enabled';
 const TRANSCRIPTION_MODEL_KEY = 'opssage:transcription-model';
-const WAKE_PHRASE = 'hey model test';
 const COMPLETE_KEYWORD = 'complete';
 const TEXT_KEYS = new Set(['text', 'transcript', 'caption']);
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe';
@@ -43,7 +42,17 @@ const BASE_INSTRUCTIONS =
     'When the user says "hey model test", respond once with the exact phrase "whats your test. Please say \"complete\" when you are finished speaking." and then stay silent.',
     'After answering the wake phrase, ignore all other user speech until the client sends you further instructions. The client will issue follow-up `response.create` messages after the user says "complete".',
     'Never improvise additional prompts such as "Please continue" or "Complete.". Only speak the explicit instructions provided by the client.',
+    'Speak only in English regardless of the language used by the user.',
   ].join(' ');
+const MANUAL_TURN_DETECTION = {
+  type: 'server_vad',
+  threshold: 0.5,
+  prefix_padding_ms: 300,
+  silence_duration_ms: 200,
+  idle_timeout_ms: 6000,
+  create_response: false,
+  interrupt_response: false,
+};
 const initialModelValue = () => {
   if (typeof window !== 'undefined') {
     const stored = window.localStorage.getItem(MODEL_STORAGE_KEY);
@@ -89,17 +98,13 @@ const App = () => {
   const localStreamRef = useRef<MediaStream | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-const captureStateRef = useRef<'idle' | 'awaiting' | 'awaiting_transcription'>('idle');
-const captureBufferRef = useRef('');
 const lastUserUtteranceRef = useRef<string | null>(null);
-const originalTurnDetectionRef = useRef<Record<string, unknown> | null>(null);
+const modeRef = useRef<'normal' | 'test'>('normal');
+const testTranscriptRef = useRef<string[]>([]);
 const turnDetectionDisabledRef = useRef(false);
 const pendingSessionUpdatesRef = useRef<any[]>([]);
 const currentResponseIdRef = useRef<string | null>(null);
 const allowNextResponseRef = useRef(false);
-const transcriptionResponseIdRef = useRef<string | null>(null);
-const transcriptionBufferRef = useRef('');
-const pendingCapturedTextRef = useRef('');
 
   const addLog = (direction: LogDirection, payload: unknown) => {
     setLogs((prev) => [
@@ -230,6 +235,7 @@ const pendingCapturedTextRef = useRef('');
     }
     setIsTalking(false);
     setTalkBusy(false);
+    turnDetectionDisabledRef.current = false;
   };
 
   useEffect(
@@ -292,6 +298,7 @@ const pendingCapturedTextRef = useRef('');
     const requestBody: Record<string, unknown> = {
       model: activeModel,
       instructions: BASE_INSTRUCTIONS,
+      turn_detection: { ...MANUAL_TURN_DETECTION },
     };
 
     if (enableTranscription) {
@@ -339,13 +346,6 @@ const pendingCapturedTextRef = useRef('');
 
       const sessionPayload = (parsed as { session?: RealtimeSession }).session ?? null;
       setSession(sessionPayload);
-      if (sessionPayload?.turn_detection && !originalTurnDetectionRef.current) {
-        try {
-          originalTurnDetectionRef.current = JSON.parse(JSON.stringify(sessionPayload.turn_detection));
-        } catch (err) {
-          originalTurnDetectionRef.current = sessionPayload.turn_detection as Record<string, unknown>;
-        }
-      }
       if (sessionPayload) {
         addLog('to-gpt', {
           hint: 'Use this session to open a WebRTC connection with OpenAI.',
@@ -410,23 +410,76 @@ const pendingCapturedTextRef = useRef('');
   }, [session, model, enableTranscription, transcriptionModel]);
 
 const resetCapture = () => {
-  captureStateRef.current = 'idle';
-  captureBufferRef.current = '';
+  modeRef.current = 'normal';
+  testTranscriptRef.current = [];
   lastUserUtteranceRef.current = null;
-  restoreAutoResponses();
-  pendingCapturedTextRef.current = '';
-  transcriptionResponseIdRef.current = null;
-  transcriptionBufferRef.current = '';
   allowNextResponseRef.current = false;
 };
 
-const sendRealtimeInstruction = (text: string) => {
+const TRIGGER_PHRASES = ['hay model', 'hey model', 'hay, model', 'hey, model'];
+const STOP_PHRASES = ['model stop', 'muddle stop', 'model, stop', 'muddle, stop'];
+const COMMON_SINGLE_WORDS = new Set([
+  'hi',
+  'hello',
+  'hey',
+  'thanks',
+  'thank',
+  'yes',
+  'no',
+  'ok',
+  'okay',
+  'test',
+  'testing',
+  'stop',
+  'start',
+  'help',
+  'sure',
+  'please',
+]);
+
+const normaliseUtterance = (value: string) => {
+  const lowered = value.trim().toLowerCase();
+  const cleaned = lowered.replace(/[^a-z0-9\s]/g, ' ');
+  return cleaned.replace(/\s+/g, ' ').trim();
+};
+
+const isLikelyNoise = (normalized: string) => {
+  if (!normalized) {
+    return true;
+  }
+  if (TRIGGER_PHRASES.includes(normalized) || STOP_PHRASES.includes(normalized)) {
+    return false;
+  }
+  const parts = normalized.split(' ').filter(Boolean);
+  if (parts.length === 0) {
+    return true;
+  }
+  if (parts.length === 1) {
+    return !COMMON_SINGLE_WORDS.has(parts[0]);
+  }
+  return false;
+};
+
+const sendRealtimeInstruction = (
+  text: string,
+  options: { modalities?: Array<'audio' | 'text'>; exact?: boolean } = {},
+) => {
     const dc = dataChannelRef.current;
+    const modalities = options.modalities ?? ['audio', 'text'];
+    const instructionPrefix = 'Respond only in English.';
+    const instructions = options.exact
+      ? `${instructionPrefix} Say exactly: "${text}".`
+      : `${instructionPrefix} ${text}`;
+    const content: Array<Record<string, unknown>> = [];
+    if (modalities.includes('text')) {
+      content.push({ type: 'output_text', text });
+    }
     const payload = {
       type: 'response.create',
       response: {
-        modalities: ['audio', 'text'],
-        instructions: text,
+        modalities,
+        instructions,
+        conversation: 'none',
       },
     };
 
@@ -437,41 +490,6 @@ const sendRealtimeInstruction = (text: string) => {
     } else {
       addLog('to-gpt', { event: 'instruction-buffered', payload });
     }
-  };
-
-  const requestTranscriptionFromModel = (capturedText: string) => {
-    if (!enableTranscription) {
-      void (async () => {
-        await submitPingRequest(capturedText);
-        resetCapture();
-      })();
-      return;
-    }
-
-    const dc = dataChannelRef.current;
-    const payload = {
-      type: 'response.create',
-      response: {
-        modalities: ['text'],
-        instructions: TRANSCRIPTION_PROMPT,
-      },
-    };
-
-    if (!dc || dc.readyState !== 'open') {
-      addLog('to-gpt', { event: 'transcription-request-skipped', reason: 'data-channel not ready' });
-      allowNextResponseRef.current = false;
-      void (async () => {
-        await submitPingRequest(capturedText);
-        resetCapture();
-      })();
-      return;
-    }
-
-    allowNextResponseRef.current = true;
-    transcriptionBufferRef.current = '';
-    transcriptionResponseIdRef.current = null;
-    dc.send(JSON.stringify(payload));
-    addLog('to-gpt', { event: 'transcription-request', payload });
   };
 
   const sendSessionUpdate = (sessionPatch: Record<string, unknown>) => {
@@ -514,74 +532,42 @@ const disableAutoResponses = () => {
     return;
   }
 
-    sendSessionUpdate({
-      turn_detection: {
-        type: 'server_vad',
-        threshold: 0.5,
-        prefix_padding_ms: 300,
-        silence_duration_ms: 200,
-        idle_timeout_ms: null,
-        create_response: false,
-        interrupt_response: false,
-      },
-    });
+  sendSessionUpdate({
+    turn_detection: { ...MANUAL_TURN_DETECTION },
+  });
   turnDetectionDisabledRef.current = true;
 };
 
-  const restoreAutoResponses = () => {
-    if (!turnDetectionDisabledRef.current) {
-      return;
-    }
 
-    const original = originalTurnDetectionRef.current;
-    if (original) {
-      sendSessionUpdate({ turn_detection: original });
-    } else {
-      sendSessionUpdate({
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 200,
-          idle_timeout_ms: null,
-          create_response: true,
-          interrupt_response: true,
-        },
-      });
-    }
-    turnDetectionDisabledRef.current = false;
-  };
-
-
-  const submitPingRequest = async (testText: string) => {
+  const submitPingRequest = async (testText: string): Promise<string | null> => {
     if (!config.apiBaseUrl) {
       addLog('from-aws', { error: 'API base URL is not configured.' });
-      sendRealtimeInstruction('Unable to reach the ping API right now.');
-      return;
+      setError('API base URL is not configured.');
+      return null;
     }
 
     if (!bearer) {
       addLog('from-aws', { error: 'Bearer token is required for ping requests.' });
-      sendRealtimeInstruction('Add your bearer token before running the test.');
-      return;
+      setError('Add your bearer token before running the test.');
+      return null;
     }
 
-    const url = `${config.apiBaseUrl}/secure/ping`;
+    const url = new URL(`${config.apiBaseUrl}/secure/ping`);
+    if (testText.trim()) {
+      url.searchParams.set('number', testText.trim());
+    }
     addLog('to-aws', {
-      url,
-      method: 'POST',
-      headers: { Authorization: 'Bearer ***redacted***', 'Content-Type': 'application/json' },
-      body: { number: testText },
+      url: url.toString(),
+      method: 'GET',
+      headers: { Authorization: 'Bearer ***redacted***' },
     });
 
     try {
-      const response = await fetch(url, {
-        method: 'POST',
+      const response = await fetch(url.toString(), {
+        method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${bearer}`,
         },
-        body: JSON.stringify({ number: testText }),
       });
 
       const raw = await response.text();
@@ -598,78 +584,82 @@ const disableAutoResponses = () => {
       });
 
       if (!response.ok) {
-        sendRealtimeInstruction(`Ping request failed with status ${response.status}.`);
-        return;
+        setError(`Ping request failed with status ${response.status}`);
+        return null;
       }
 
-      const message =
-        typeof parsed === 'object' && parsed !== null && 'message' in parsed
-          ? String((parsed as Record<string, unknown>).message)
-          : 'Ping succeeded.';
-      sendRealtimeInstruction(`Ping response: ${message}`);
+      if (parsed && typeof parsed === 'object' && 'message' in parsed) {
+        return String((parsed as Record<string, unknown>).message);
+      }
+
+      if (typeof parsed === 'string') {
+        return parsed;
+      }
+
+      return raw.trim() ? raw : 'Ping succeeded.';
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       addLog('from-aws', { error: message });
-      sendRealtimeInstruction(`Ping request failed: ${message}`);
+      setError(`Ping request failed: ${message}`);
+      return null;
     }
   };
 
-  const appendToCaptureBuffer = (segment: string) => {
-    const trimmed = segment.trim();
-    if (!trimmed) {
-      return;
-    }
-    captureBufferRef.current = captureBufferRef.current
-      ? `${captureBufferRef.current} ${trimmed}`.trim()
-      : trimmed;
+
+  const respondNormally = (userText: string) => {
+    sendRealtimeInstruction(`The user said: ${userText}. Respond helpfully and conversationally.`);
   };
 
-  const processCaptureSegment = (segment: string) => {
-    if (!segment) {
-      return;
-    }
+  const enterTestMode = (rawUtterance: string) => {
+    addLog('from-gpt', { event: 'test-mode-entered', text: rawUtterance });
+    modeRef.current = 'test';
+    testTranscriptRef.current = [rawUtterance];
+    disableAutoResponses();
+    sendCancelActiveResponse();
+    sendRealtimeInstruction('what do you want to test', { modalities: ['audio', 'text'], exact: true });
+  };
 
-    let workingSegment = segment.trim();
-    if (!workingSegment) {
-      return;
-    }
+  const appendTestTranscript = (rawUtterance: string) => {
+    testTranscriptRef.current.push(rawUtterance);
+  };
 
-    const lowerWorking = workingSegment.toLowerCase();
-    const completeIdx = lowerWorking.indexOf(COMPLETE_KEYWORD);
-    let hasComplete = false;
-    if (completeIdx !== -1) {
-      workingSegment = workingSegment.slice(0, completeIdx);
-      hasComplete = true;
-    }
-
-    appendToCaptureBuffer(workingSegment);
-
-    if (hasComplete) {
-      const submission = captureBufferRef.current.trim();
-      captureBufferRef.current = '';
-
-      if (!submission) {
-        resetCapture();
-        sendRealtimeInstruction("I didn't catch your test. Please try again.");
-        return;
-      }
-
-      if (!enableTranscription) {
-        void (async () => {
-          await submitPingRequest(submission);
-          resetCapture();
-        })();
-        return;
-      }
-
-      pendingCapturedTextRef.current = submission;
-      captureStateRef.current = 'awaiting_transcription';
-      requestTranscriptionFromModel(submission);
+  const exitTestMode = () => {
+    const rawPieces = testTranscriptRef.current.slice();
+    const normalizedPieces = rawPieces.map((value) => value.trim());
+    const bodyStartIndex = normalizedPieces.findIndex((value) => TRIGGER_PHRASES.includes(normaliseUtterance(value)));
+    const effectivePieces =
+      bodyStartIndex === -1 ? normalizedPieces : normalizedPieces.slice(bodyStartIndex + 1);
+    const stopIndex = effectivePieces.findIndex((value) => STOP_PHRASES.includes(normaliseUtterance(value)));
+    const withoutStop = stopIndex === -1 ? effectivePieces : effectivePieces.slice(0, stopIndex);
+    const transcript = withoutStop.join(' ').replace(/\s+/g, ' ').trim();
+    addLog('from-gpt', { event: 'test-mode-exit', transcript });
+    modeRef.current = 'normal';
+    testTranscriptRef.current = [];
+    if (transcript) {
+      void (async () => {
+        const pingResult = await submitPingRequest(transcript);
+        if (pingResult) {
+          sendRealtimeInstruction(`Ping response: ${pingResult}`, {
+            modalities: ['audio', 'text'],
+            exact: true,
+          });
+        } else {
+          sendRealtimeInstruction('Ping request failed.', {
+            modalities: ['audio', 'text'],
+            exact: true,
+          });
+        }
+      })();
     }
   };
 
   const handleRecognizedText = (utterance: string) => {
-    const text = utterance.trim();
+    const rawUtterance = utterance;
+    if (!rawUtterance) {
+      return;
+    }
+
+    const text = rawUtterance.trim();
     if (!text) {
       return;
     }
@@ -680,35 +670,27 @@ const disableAutoResponses = () => {
     }
     lastUserUtteranceRef.current = text;
 
-    const lower = text.toLowerCase();
+    const normalized = normaliseUtterance(text);
 
-    if (captureStateRef.current === 'idle') {
-      const wakeIdx = lower.indexOf(WAKE_PHRASE);
-      if (wakeIdx !== -1) {
-        addLog('from-gpt', { event: 'wake-phrase-detected', text });
-        disableAutoResponses();
-        sendCancelActiveResponse();
-        captureStateRef.current = 'awaiting';
-        captureBufferRef.current = '';
-        sendRealtimeInstruction('whats your test. Please say "complete" when you are finished speaking.');
-
-        const remainder = text.slice(wakeIdx + WAKE_PHRASE.length);
-        if (remainder.trim()) {
-          processCaptureSegment(remainder);
-        }
-        return;
+    if (modeRef.current === 'test') {
+      appendTestTranscript(rawUtterance);
+      if (STOP_PHRASES.includes(normalized)) {
+        exitTestMode();
       }
       return;
     }
 
-    if (captureStateRef.current === 'awaiting') {
-      processCaptureSegment(text);
+    if (TRIGGER_PHRASES.includes(normalized)) {
+      enterTestMode(rawUtterance);
       return;
     }
 
-    if (captureStateRef.current === 'awaiting_transcription') {
+    if (isLikelyNoise(normalized)) {
+      addLog('from-gpt', { event: 'ignored-utterance', text, normalized });
       return;
     }
+
+    respondNormally(text);
   };
 
   const handleRealtimeEvent = (payload: unknown) => {
@@ -718,6 +700,15 @@ const disableAutoResponses = () => {
 
     const record = payload as Record<string, unknown>;
     const type = typeof record.type === 'string' ? record.type : '';
+
+    if (type === 'error') {
+      const error = record.error as Record<string, unknown> | undefined;
+      const param = typeof error?.param === 'string' ? error.param : '';
+      if (param.startsWith('session.turn_detection')) {
+        turnDetectionDisabledRef.current = false;
+      }
+      return;
+    }
 
     if (type === 'session.created') {
       disableAutoResponses();
@@ -731,85 +722,10 @@ const disableAutoResponses = () => {
         currentResponseIdRef.current = responseId;
       }
 
-      if (allowNextResponseRef.current && captureStateRef.current === 'awaiting_transcription' && responseId) {
-        allowNextResponseRef.current = false;
-        transcriptionResponseIdRef.current = responseId;
-        transcriptionBufferRef.current = '';
-        return;
-      }
-
       if (allowNextResponseRef.current) {
         allowNextResponseRef.current = false;
-        return;
-      }
-
-      if (captureStateRef.current === 'awaiting' && responseId) {
-        sendCancelActiveResponse(responseId);
-        return;
-      }
-    }
-
-    if (
-      (type === 'response.audio_transcript.delta' || type === 'response.audio_transcript.done') &&
-      (captureStateRef.current === 'awaiting' || captureStateRef.current === 'awaiting_transcription')
-    ) {
-      const transcript =
-        typeof record.delta === 'string'
-          ? record.delta
-          : typeof record.transcript === 'string'
-            ? record.transcript
-            : '';
-      if (transcript.trim().toLowerCase() === 'complete') {
-        sendCancelActiveResponse(typeof record.response_id === 'string' ? record.response_id : null);
-        resetCapture();
-        return;
-      }
-    }
-
-    if (type === 'response.output_text.delta') {
-      if (!enableTranscription) {
-        return;
-      }
-      const responseId = typeof record.response_id === 'string' ? record.response_id : null;
-      if (responseId && transcriptionResponseIdRef.current === responseId) {
-        const delta = typeof record.delta === 'string' ? record.delta : '';
-        transcriptionBufferRef.current += delta;
       }
       return;
-    }
-
-    if (type === 'response.output_text.done') {
-      if (!enableTranscription) {
-        return;
-      }
-      const responseId = typeof record.response_id === 'string' ? record.response_id : null;
-      if (responseId && transcriptionResponseIdRef.current === responseId) {
-        const raw = transcriptionBufferRef.current.trim();
-        let transcriptText = raw;
-        try {
-          const parsed = JSON.parse(raw);
-          if (typeof parsed === 'string') {
-            transcriptText = parsed;
-          } else if (parsed && typeof parsed.transcript === 'string') {
-            transcriptText = parsed.transcript;
-          }
-        } catch (err) {
-          // leave as raw
-        }
-
-        const finalTranscript = transcriptText || pendingCapturedTextRef.current;
-        if (!finalTranscript) {
-          sendRealtimeInstruction('Could not capture any text from the user.');
-          resetCapture();
-          return;
-        }
-
-        void (async () => {
-          await submitPingRequest(finalTranscript);
-          resetCapture();
-        })();
-        return;
-      }
     }
 
     if (type === 'response.done') {
@@ -818,6 +734,7 @@ const disableAutoResponses = () => {
       if (responseId && currentResponseIdRef.current === responseId) {
         currentResponseIdRef.current = null;
       }
+      return;
     }
 
     if (type === 'conversation.item.input_audio_transcription.completed') {
@@ -840,6 +757,7 @@ const disableAutoResponses = () => {
         const segments = extractTextValues(delta);
         segments.forEach(handleRecognizedText);
       }
+      return;
     }
   };
 
@@ -902,6 +820,7 @@ const disableAutoResponses = () => {
         addLog('to-gpt', { event: 'data-channel-open' });
         flushPendingSessionUpdates();
         disableAutoResponses();
+        sendRealtimeInstruction('Hello!', { exact: true });
       };
 
       dataChannel.onmessage = (event) => {
