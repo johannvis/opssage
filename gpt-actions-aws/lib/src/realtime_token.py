@@ -100,15 +100,18 @@ def _decode_body(event: Dict[str, Any]) -> Dict[str, Any]:
 
 def _sanitize_model(requested: Any) -> str:
     """Resolve the model name by preference order and ensure a non-empty string."""
-    candidate = requested or os.environ.get("REALTIME_MODEL") or DEFAULT_REALTIME_MODEL
-    if isinstance(candidate, str):
-        candidate = candidate.strip()
-    else:
-        candidate = DEFAULT_REALTIME_MODEL
+    if isinstance(requested, str):
+        requested = requested.strip()
+        if requested:
+            return requested
 
-    if not candidate:
-        return DEFAULT_REALTIME_MODEL
-    return candidate
+    env_model = os.environ.get("REALTIME_MODEL")
+    if isinstance(env_model, str):
+        env_model = env_model.strip()
+        if env_model:
+            return env_model
+
+    return DEFAULT_REALTIME_MODEL
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -189,13 +192,11 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             req = request.Request(
                 OPENAI_SESSIONS_URL,
                 data=payload_bytes,
-                headers={
-                    "Authorization": f"Bearer {openai_api_key}",
-                    "Content-Type": "application/json",
-                    "OpenAI-Beta": "realtime=v1",
-                },
                 method="POST",
             )
+            req.add_header("Authorization", f"Bearer {openai_api_key}")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("OpenAI-Beta", "realtime=v1")
 
             with request.urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as resp:
                 openai_payload = json.loads(resp.read().decode("utf-8"))
