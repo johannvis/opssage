@@ -15,17 +15,27 @@ interface Props {
   open: boolean;
   onToggle: () => void;
   onClear: () => void;
+  onDownload: () => void;
   canClear: boolean;
+  canDownload: boolean;
 }
 
-const directionLabel: Record<LogDirection, string> = {
+export const directionLabel: Record<LogDirection, string> = {
   'to-gpt': 'to gpt',
   'from-gpt': 'from gpt',
   'to-aws': 'to aws',
   'from-aws': 'from aws',
 };
 
-export const DebugPanel = ({ logs, open, onToggle, onClear, canClear }: Props) => {
+export const DebugPanel = ({
+  logs,
+  open,
+  onToggle,
+  onClear,
+  onDownload,
+  canClear,
+  canDownload,
+}: Props) => {
   const content = useMemo(
     () =>
       logs.map((log) => {
@@ -52,6 +62,14 @@ export const DebugPanel = ({ logs, open, onToggle, onClear, canClear }: Props) =
       <div className="panel-header">
         <button type="button" className="toggle" onClick={onToggle}>
           {open ? 'Hide debug' : 'Show debug'}
+        </button>
+        <button
+          type="button"
+          className="download"
+          onClick={onDownload}
+          disabled={!canDownload}
+        >
+          Download
         </button>
         <button type="button" className="clear" onClick={onClear} disabled={!canClear}>
           Clear

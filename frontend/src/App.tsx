@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { config, defaultRealtimeModel } from './config';
-import { DebugPanel, LogDirection, LogEntry } from './components/DebugPanel';
+import { DebugPanel, LogDirection, LogEntry, directionLabel } from './components/DebugPanel';
 
 type ClientSecret = {
   value?: string;
@@ -69,6 +69,40 @@ const App = () => {
         payload,
       },
     ]);
+  };
+
+  const handleDownloadLogs = () => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (!logs.length) {
+      return;
+    }
+
+    const entries = logs.map((log) => {
+      const channel = directionLabel[log.direction];
+      const isoTimestamp = log.timestamp;
+      const localTimestamp = new Date(isoTimestamp).toLocaleString();
+      const header = `${localTimestamp} ${channel}`;
+      return {
+        header,
+        timestamp: isoTimestamp,
+        channel,
+        payload: log.payload,
+      };
+    });
+
+    const serialized = JSON.stringify(entries, null, 2);
+    const blob = new Blob([serialized], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    anchor.href = url;
+    anchor.download = `opssage-debug-${timestamp}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
   };
 
   const stopVoiceSession = () => {
@@ -736,7 +770,9 @@ const App = () => {
         open={panelOpen}
         onToggle={() => setPanelOpen((prev) => !prev)}
         onClear={() => setLogs([])}
+        onDownload={handleDownloadLogs}
         canClear={logs.length > 0}
+        canDownload={logs.length > 0}
       />
 
       <footer>
