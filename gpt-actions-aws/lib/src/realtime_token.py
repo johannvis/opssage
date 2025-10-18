@@ -197,6 +197,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             req.add_header("Authorization", f"Bearer {openai_api_key}")
             req.add_header("Content-Type", "application/json")
             req.add_header("OpenAI-Beta", "realtime=v1")
+            if "Openai-beta" in req.headers:  # urllib normalises header casing
+                req.headers["OpenAI-Beta"] = req.headers.pop("Openai-beta")
 
             with request.urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as resp:
                 openai_payload = json.loads(resp.read().decode("utf-8"))
