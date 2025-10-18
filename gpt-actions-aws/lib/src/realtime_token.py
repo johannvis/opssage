@@ -9,12 +9,15 @@ import os
 from typing import Any, Dict
 from urllib import error, request
 
-import boto3
+try:
+    import boto3  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - exercised via tests
+    boto3 = None  # type: ignore[assignment]
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
-_SECRETS_CLIENT = boto3.client("secretsmanager")
+_SECRETS_CLIENT: Any | None = None
 _SECRET_CACHE: Dict[str, str] = {}
 
 OPENAI_SESSIONS_URL = "https://api.openai.com/v1/realtime/sessions"
@@ -39,12 +42,28 @@ def _cors(status: int, body: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _resolve_secrets_client() -> Any:
+    """Lazily construct the AWS Secrets Manager client to keep boto3 optional in tests."""
+    global _SECRETS_CLIENT
+    if _SECRETS_CLIENT is not None:
+        return _SECRETS_CLIENT
+
+    if boto3 is None:
+        raise ModuleNotFoundError(
+            "boto3 is required to fetch secrets. Install boto3 in the deployment environment."
+        )
+
+    _SECRETS_CLIENT = boto3.client("secretsmanager")
+    return _SECRETS_CLIENT
+
+
 def _get_secret(secret_arn: str) -> str:
     """Fetch and memoise the raw secret string."""
+    client = _resolve_secrets_client()
     if secret_arn in _SECRET_CACHE:
         return _SECRET_CACHE[secret_arn]
 
-    response = _SECRETS_CLIENT.get_secret_value(SecretId=secret_arn)
+    response = client.get_secret_value(SecretId=secret_arn)
     secret = response.get("SecretString")
     if secret is None:
         raise RuntimeError(f"Secret {secret_arn} does not contain a SecretString payload")
